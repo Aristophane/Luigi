@@ -1,0 +1,585 @@
+"use client";
+
+import {
+  Activity,
+  Bell,
+  Check,
+  ChevronRight,
+  CloudCog,
+  GitBranch,
+  HardDrive,
+  LayoutDashboard,
+  ListTodo,
+  LogOut,
+  Moon,
+  Plus,
+  RefreshCw,
+  Server,
+  Settings,
+  ShieldCheck,
+  Sun,
+  TrainFront,
+} from "lucide-react";
+import { useActionState, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import {
+  completeMaintenanceTask,
+  createApplication,
+  createMaintenanceTask,
+  runMonitoringNow,
+  type CreateApplicationState,
+  type CreateTaskState,
+} from "@/app/actions";
+import { signOut } from "@/app/(auth)/actions";
+import { LivingRail } from "@/components/living-rail";
+import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
+import { StatusDot } from "@/components/status-dot";
+import { ScanApplicationButton } from "@/components/scan-application-button";
+import type { ActivityEvent, DashboardNotification, MaintenanceTask, MonitoredApplication, VpsOverview } from "@/lib/domain";
+
+type Theme = "light" | "dark";
+type PushState = "idle" | "enabled" | "denied" | "unsupported";
+
+const navigation = [
+  { label: "Vue générale", icon: LayoutDashboard, href: "#overview" },
+  { label: "Applications", icon: CloudCog, href: "#applications" },
+  { label: "VPS", icon: Server, href: "#vps" },
+  { label: "Maintenance", icon: ListTodo, href: "#maintenance" },
+  { label: "Sécurité", icon: ShieldCheck, href: "#security" },
+];
+
+const severityLabels = {
+  critical: "Critique",
+  high: "Élevée",
+  medium: "Moyenne",
+  low: "Faible",
+};
+
+const initialApplicationState: CreateApplicationState = { status: "idle", message: "" };
+const initialTaskState: CreateTaskState = { status: "idle", message: "" };
+
+type DashboardProps = {
+  applications: MonitoredApplication[];
+  maintenanceTasks: MaintenanceTask[];
+  notifications: DashboardNotification[];
+  activity: ActivityEvent[];
+  vps: VpsOverview;
+  userName: string;
+  githubIntegrationLabel?: string;
+};
+
+export function Dashboard({ applications, maintenanceTasks, notifications, activity, vps, userName, githubIntegrationLabel }: DashboardProps) {
+  const router = useRouter();
+  const [theme, setTheme] = useState<Theme>("light");
+  const [lastRefresh, setLastRefresh] = useState("il y a 38 secondes");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pushState, setPushState] = useState<PushState>("idle");
+  const [applicationState, applicationAction, applicationPending] = useActionState(
+    createApplication,
+    initialApplicationState,
+  );
+  const [taskState, taskAction, taskPending] = useActionState(createMaintenanceTask, initialTaskState);
+  const appDialog = useRef<HTMLDialogElement>(null);
+  const appForm = useRef<HTMLFormElement>(null);
+  const taskDialog = useRef<HTMLDialogElement>(null);
+  const taskForm = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const storedTheme = window.localStorage.getItem("luigi-theme") as Theme | null;
+      const preferredTheme: Theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+      const initialTheme = storedTheme ?? preferredTheme;
+      setTheme(initialTheme);
+      document.documentElement.dataset.theme = initialTheme;
+
+      if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+        setPushState("unsupported");
+      } else if (Notification.permission === "granted") {
+        setPushState("enabled");
+      } else if (Notification.permission === "denied") {
+        setPushState("denied");
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (applicationState.status === "success") {
+      appForm.current?.reset();
+      router.refresh();
+    }
+  }, [applicationState.status, router]);
+
+  useEffect(() => {
+    if (taskState.status === "success") {
+      taskForm.current?.reset();
+      router.refresh();
+    }
+  }, [taskState.status, router]);
+
+  const visibleTasks = maintenanceTasks;
+
+  function toggleTheme() {
+    const nextTheme = theme === "light" ? "dark" : "light";
+    setTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+    window.localStorage.setItem("luigi-theme", nextTheme);
+  }
+
+  async function refreshData() {
+    setIsRefreshing(true);
+    try {
+      const result = await runMonitoringNow();
+      setLastRefresh(result.checked === 0
+        ? "— aucun contrôle configuré"
+        : `à l’instant · ${result.healthy}/${result.checked} sain${result.healthy > 1 ? "s" : ""}`);
+      router.refresh();
+    } catch {
+      setLastRefresh("— contrôle impossible");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  const overviewStatus = applications.some((application) => application.status === "critical")
+    ? "critical"
+    : applications.some((application) => application.status === "warning")
+      ? "warning"
+      : applications.length > 0 && applications.every((application) => application.status === "healthy")
+        ? "healthy"
+        : "unknown";
+  const overviewTitle = overviewStatus === "critical"
+    ? "Une application demande une intervention."
+    : overviewStatus === "warning"
+      ? "Un signal mérite ton attention."
+      : overviewStatus === "healthy"
+        ? "Les applications répondent normalement."
+        : "Les premiers contrôles sont en attente.";
+  const overviewDescription = applications.length === 0
+    ? "Ajoute une application pour démarrer la surveillance."
+    : `${applications.filter((application) => application.status === "healthy").length} application${applications.length > 1 ? "s" : ""} saine${applications.length > 1 ? "s" : ""} sur ${applications.length}. Les incidents ne sont ouverts qu’après trois échecs consécutifs.`;
+
+  async function enableNotifications() {
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setPushState("unsupported");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      setPushState("denied");
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification("Luigi veille", {
+      body: "Les notifications de supervision sont actives sur ce navigateur.",
+      icon: "/icon.svg",
+      tag: "luigi-push-test",
+      data: { url: "/#overview" },
+    });
+    setPushState("enabled");
+  }
+
+  return (
+    <>
+      <ServiceWorkerRegistration />
+      <a className="skip-link" href="#main-content">Aller au contenu</a>
+
+      <div className="app-shell">
+        <aside className="sidebar" aria-label="Navigation principale">
+          <a className="brand" href="#overview" aria-label="Luigi, vue générale">
+            <span className="brand__mark" aria-hidden="true"><TrainFront /></span>
+            <span className="brand__name">Luigi</span>
+          </a>
+
+          <nav className="sidebar__nav">
+            {navigation.map((item, index) => {
+              const Icon = item.icon;
+              return (
+                <a className={index === 0 ? "nav-link nav-link--active" : "nav-link"} href={item.href} key={item.label}>
+                  <Icon aria-hidden="true" />
+                  <span>{item.label}</span>
+                </a>
+              );
+            })}
+          </nav>
+
+          <div className="sidebar__footer">
+            <div className={`agent-state ${vps.connected ? "agent-state--online" : "agent-state--idle"}`}>
+              <span className="agent-state__signal" aria-hidden="true" />
+              <span>
+                <strong>{vps.connected ? "Agent connecté" : vps.configured ? "Agent silencieux" : "Agent à installer"}</strong>
+                <small>{vps.hostname ?? "Ubuntu 24.04"}</small>
+              </span>
+            </div>
+            <Link className="nav-link" href="/settings/integrations">
+              <Settings aria-hidden="true" />
+              <span>Paramètres</span>
+            </Link>
+            <form action={signOut}>
+              <button className="nav-link nav-link--button" type="submit">
+                <LogOut aria-hidden="true" />
+                <span>Se déconnecter</span>
+              </button>
+            </form>
+          </div>
+        </aside>
+
+        <main className="main-content" id="main-content">
+          <header className="topbar">
+            <div>
+              <p className="eyebrow">Mercredi 2 septembre</p>
+              <h1>Bonjour {userName.split(" ")[0]}.</h1>
+            </div>
+            <div className="topbar__actions">
+              <button className="icon-button" type="button" onClick={toggleTheme} aria-label={theme === "light" ? "Activer le thème sombre" : "Activer le thème clair"}>
+                {theme === "light" ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
+              </button>
+              <details className="notifications-menu">
+                <summary className="icon-button" aria-label="Ouvrir les notifications">
+                  <Bell aria-hidden="true" />
+                  {notifications.length > 0 && <span className="notification-count" aria-label={`${notifications.length} notifications non lues`}>{notifications.length}</span>}
+                </summary>
+                <div className="notifications-panel">
+                  <div className="notifications-panel__heading">
+                    <strong>Notifications</strong>
+                    <span>{notifications.length} nouvelle{notifications.length > 1 ? "s" : ""}</span>
+                  </div>
+                  {notifications.map((notification) => (
+                    <a href={notification.targetUrl} key={notification.id}>
+                      <span className={`notification-mark notification-mark--${notification.severity}`} aria-hidden="true" />
+                      <span><strong>{notification.title}</strong><small>{notification.body}</small></span>
+                    </a>
+                  ))}
+                  {notifications.length === 0 && <p className="notifications-panel__empty">Aucune nouvelle notification.</p>}
+                </div>
+              </details>
+              <button className="button button--primary" type="button" onClick={() => appDialog.current?.showModal()}>
+                <Plus aria-hidden="true" />
+                Ajouter une application
+              </button>
+            </div>
+          </header>
+
+          <section className="status-intro" id="overview" aria-labelledby="overview-title">
+            <div>
+              <StatusDot status={overviewStatus} />
+              <h2 id="overview-title">{overviewTitle}</h2>
+              <p>{overviewDescription}</p>
+            </div>
+            <button className="button button--quiet" type="button" onClick={refreshData} disabled={isRefreshing}>
+              <RefreshCw className={isRefreshing ? "spin" : ""} aria-hidden="true" />
+              {isRefreshing ? "Actualisation…" : `Actualisé ${lastRefresh}`}
+            </button>
+          </section>
+
+          <LivingRail applicationCount={applications.length} />
+
+          <div className="dashboard-grid">
+            <section className="section applications-section" id="applications" aria-labelledby="applications-title">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Disponibilité</p>
+                  <h2 id="applications-title">Applications</h2>
+                </div>
+                <a className="text-link" href="#applications">Voir les contrôles <ChevronRight aria-hidden="true" /></a>
+              </div>
+
+              <div className="application-list">
+                {applications.map((application) => (
+                  <article className="application-row" key={application.id}>
+                    <div className="application-row__identity">
+                      <StatusDot status={application.status} compact />
+                      <div>
+                        <h3>{application.name}</h3>
+                        <p>{application.url}</p>
+                      </div>
+                    </div>
+                    <div className="application-row__metric">
+                      <span>Disponibilité</span>
+                      <strong>{application.uptime30d === null ? "En attente" : `${application.uptime30d.toLocaleString("fr-FR")} %`}</strong>
+                    </div>
+                    <div className="application-row__metric">
+                      <span>Réponse</span>
+                      <strong className={application.status === "warning" ? "metric-warning" : ""}>{application.latencyMs === null ? "En attente" : `${application.latencyMs} ms`}</strong>
+                    </div>
+                    <div className="technology-list" aria-label={`Technologies de ${application.name}`}>
+                      {application.technologies.slice(0, 2).map((technology) => (
+                        <span key={technology.name}>{technology.name} {technology.version}</span>
+                      ))}
+                    </div>
+                    <ScanApplicationButton applicationId={application.id} applicationName={application.name} />
+                  </article>
+                ))}
+                {applications.length === 0 && (
+                  <div className="empty-state application-empty-state">
+                    <CloudCog aria-hidden="true" />
+                    <strong>Aucune application sur la voie.</strong>
+                    <span>Ajoute la première pour préparer ses contrôles et l’analyse de son dépôt.</span>
+                    <button className="button button--secondary" type="button" onClick={() => appDialog.current?.showModal()}>
+                      <Plus aria-hidden="true" /> Ajouter une application
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="section vps-section" id="vps" aria-labelledby="vps-title">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Ubuntu 24.04</p>
+                  <h2 id="vps-title">VPS production</h2>
+                </div>
+                <div className="section-heading__actions">
+                  <StatusDot status={vps.status} />
+                  <Link className="text-link" href="/settings/vps">Configurer</Link>
+                </div>
+              </div>
+
+              {vps.metrics.length > 0 ? <div className="metric-list">
+                {vps.metrics.map((metric) => (
+                  <div className="metric-row" key={metric.id}>
+                    <div className="metric-row__heading">
+                      <span>{metric.label}</span>
+                      <strong>{metric.displayValue}</strong>
+                    </div>
+                    <div className="meter" role="meter" aria-label={metric.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}>
+                      <span className={`meter__value meter__value--${metric.status}`} style={{ transform: `scaleX(${metric.value / 100})` }} />
+                    </div>
+                    <small>{metric.detail}</small>
+                  </div>
+                ))}
+              </div> : (
+                <div className="empty-state vps-empty-state">
+                  <Server aria-hidden="true" />
+                  <strong>{vps.configured ? "En attente du premier rapport." : "Le VPS n’est pas encore relié."}</strong>
+                  <span>{vps.configured ? "Démarre le service sur Ubuntu pour remplacer cette zone par les mesures réelles." : "Crée un jeton puis installe l’agent en quelques commandes."}</span>
+                  <Link className="button button--secondary" href="/settings/vps">{vps.configured ? "Voir l’installation" : "Relier le VPS"}</Link>
+                </div>
+              )}
+
+              {vps.metrics.length > 0 && <>
+                <div className="vps-facts">
+                  <span>
+                    <ShieldCheck aria-hidden="true" />
+                    <strong>{vps.securityUpdates === 0 ? "À jour" : `${vps.securityUpdates} à appliquer`}</strong>
+                    <small>Correctifs de sécurité · UFW {vps.ufwActive === null ? "inconnu" : vps.ufwActive ? "actif" : "inactif"}</small>
+                  </span>
+                  <span>
+                    <HardDrive aria-hidden="true" />
+                    <strong>{vps.backupStatus === "ok" ? "Réussie" : vps.backupStatus === "failed" ? "À vérifier" : "Non configurée"}</strong>
+                    <small>Sauvegarde · {vps.lastSeenLabel}</small>
+                  </span>
+                </div>
+                {vps.rebootRequired && <p className="vps-action-note"><RefreshCw aria-hidden="true" /> Redémarrage requis après mise à jour. Une tâche de maintenance a été créée.</p>}
+              </>}
+            </section>
+
+            <section className="section tasks-section" id="maintenance" aria-labelledby="tasks-title">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">À faire</p>
+                  <h2 id="tasks-title">Maintenance</h2>
+                </div>
+                <div className="section-heading__actions">
+                  <span className="section-count">{visibleTasks.length}</span>
+                  <button className="icon-button" type="button" onClick={() => taskDialog.current?.showModal()} aria-label="Ajouter une tâche manuelle">
+                    <Plus aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="task-list" aria-live="polite">
+                {visibleTasks.length > 0 ? visibleTasks.map((task) => (
+                  <article className="task-row" key={task.id}>
+                    <form action={completeMaintenanceTask.bind(null, task.id)}>
+                      <button className="task-check" type="submit" aria-label={`Marquer « ${task.title} » comme terminée`}>
+                        <Check aria-hidden="true" />
+                      </button>
+                    </form>
+                    <div className="task-row__content">
+                      <div className="task-row__title">
+                        <h3>{task.title}</h3>
+                        <span className={`severity severity--${task.severity}`}>{severityLabels[task.severity]}</span>
+                      </div>
+                      <p>{task.source} · {task.dueLabel}</p>
+                    </div>
+                    <button className="row-action" type="button" aria-label={`Ouvrir la tâche ${task.title}`}>
+                      <ChevronRight aria-hidden="true" />
+                    </button>
+                  </article>
+                )) : (
+                  <div className="empty-state">
+                    <Check aria-hidden="true" />
+                    <strong>La voie est libre.</strong>
+                    <span>Aucune maintenance ne demande ton attention.</span>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="section activity-section" aria-labelledby="activity-title">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Aujourd’hui</p>
+                  <h2 id="activity-title">Journal</h2>
+                </div>
+                <Activity aria-hidden="true" />
+              </div>
+              <ol className="activity-list">
+                {activity.map((event) => (
+                  <li key={event.id}>
+                    <StatusDot status={event.status} compact />
+                    <div><strong>{event.title}</strong><span>{event.detail}</span></div>
+                    <time>{event.timeLabel}</time>
+                  </li>
+                ))}
+                {activity.length === 0 && (
+                  <li className="activity-list__empty">
+                    <Activity aria-hidden="true" />
+                    <div><strong>Aucun contrôle exécuté</strong><span>Lance une actualisation pour créer la première observation.</span></div>
+                  </li>
+                )}
+              </ol>
+            </section>
+          </div>
+
+          <div className="settings-grid" id="settings">
+            <section className="notification-setup" aria-labelledby="notification-title">
+              <div className="notification-setup__icon"><Bell aria-hidden="true" /></div>
+              <div>
+                <p className="eyebrow">Ce navigateur</p>
+                <h2 id="notification-title">{pushState === "enabled" ? "Notifications activées" : "Rester informé sans garder Luigi ouvert"}</h2>
+                <p>{pushState === "enabled" ? "Ce navigateur recevra les incidents critiques et les alertes importantes." : "Active les notifications Web Push. Luigi enverra d’abord un message de test."}</p>
+              </div>
+              <button className="button button--secondary" type="button" onClick={enableNotifications} disabled={pushState === "enabled" || pushState === "unsupported"}>
+                {pushState === "enabled" ? <><Check aria-hidden="true" /> Activées</> : pushState === "denied" ? "Autorisation refusée" : pushState === "unsupported" ? "Non disponible" : "Activer sur ce navigateur"}
+              </button>
+            </section>
+            <section className="notification-setup" aria-labelledby="github-title">
+              <div className="notification-setup__icon"><GitBranch aria-hidden="true" /></div>
+              <div>
+                <p className="eyebrow">Dépôts et dépendances</p>
+                <h2 id="github-title">{githubIntegrationLabel ?? "Connecter GitHub"}</h2>
+                <p>{githubIntegrationLabel ? "Les dépôts privés autorisés peuvent être analysés en lecture seule." : "Les dépôts publics fonctionnent sans jeton. Connecte GitHub pour les dépôts privés."}</p>
+              </div>
+              <Link className="button button--secondary" href="/settings/integrations">
+                {githubIntegrationLabel ? "Gérer" : "Configurer"}
+              </Link>
+            </section>
+          </div>
+        </main>
+      </div>
+
+      <dialog className="app-dialog" ref={appDialog}>
+        <form method="dialog" className="dialog-close-form">
+          <button className="icon-button" aria-label="Fermer l’ajout d’application">×</button>
+        </form>
+        <div className="app-dialog__heading">
+          <span className="dialog-step">Étape 1 sur 3</span>
+          <h2>Ajouter une application</h2>
+          <p>Relie son URL à un dépôt GitHub. Luigi proposera ensuite les technologies à surveiller.</p>
+        </div>
+        <form className="app-form" action={applicationAction} ref={appForm}>
+          <label>
+            <span>Nom de l’application</span>
+            <input name="name" required placeholder="Ex. Site vitrine Thermidor" />
+          </label>
+          <div className="form-grid">
+            <label>
+              <span>Environnement</span>
+              <select name="environment" defaultValue="production">
+                <option value="production">Production</option>
+                <option value="staging">Préproduction</option>
+                <option value="development">Développement</option>
+              </select>
+            </label>
+            <label>
+              <span>Branche suivie</span>
+              <input name="branch" defaultValue="main" required />
+            </label>
+          </div>
+          <label>
+            <span>URL publique</span>
+            <input name="url" type="url" required placeholder="https://example.com" />
+          </label>
+          <label>
+            <span>Dépôt GitHub</span>
+            <span className="input-with-icon"><GitBranch aria-hidden="true" /><input name="repository" required placeholder="organisation/depot" /></span>
+          </label>
+          {applicationState.message && (
+            <p className={applicationState.status === "error" ? "form-error" : "form-success"} role={applicationState.status === "error" ? "alert" : "status"}>
+              {applicationState.status === "success" && <Check aria-hidden="true" />}
+              {applicationState.message}
+            </p>
+          )}
+          <div className="app-form__actions">
+            <button className="button button--quiet" type="button" onClick={() => appDialog.current?.close()}>Garder pour plus tard</button>
+            <button className="button button--primary" type="submit" disabled={applicationPending}>
+              {applicationPending ? "Enregistrement…" : "Enregistrer l’application"}
+              {!applicationPending && <ChevronRight aria-hidden="true" />}
+            </button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog className="app-dialog" ref={taskDialog}>
+        <form method="dialog" className="dialog-close-form">
+          <button className="icon-button" aria-label="Fermer l’ajout de tâche">×</button>
+        </form>
+        <div className="app-dialog__heading">
+          <span className="dialog-step">Tâche manuelle</span>
+          <h2>Ajouter une maintenance</h2>
+          <p>Ajoute une action ponctuelle à côté des tâches générées automatiquement par Luigi.</p>
+        </div>
+        <form className="app-form" action={taskAction} ref={taskForm}>
+          <label>
+            <span>Action à réaliser</span>
+            <input name="title" required minLength={3} maxLength={140} placeholder="Ex. Tester la restauration de la sauvegarde" />
+          </label>
+          <div className="form-grid">
+            <label>
+              <span>Catégorie</span>
+              <select name="category" defaultValue="lifecycle">
+                <option value="security">Sécurité</option>
+                <option value="dependency">Dépendance</option>
+                <option value="capacity">Capacité</option>
+                <option value="backup">Sauvegarde</option>
+                <option value="lifecycle">Cycle de vie</option>
+              </select>
+            </label>
+            <label>
+              <span>Priorité</span>
+              <select name="severity" defaultValue="medium">
+                <option value="critical">Critique</option>
+                <option value="high">Élevée</option>
+                <option value="medium">Moyenne</option>
+                <option value="low">Faible</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            <span>Échéance facultative</span>
+            <input name="dueDate" type="date" />
+          </label>
+          {taskState.message && (
+            <p className={taskState.status === "error" ? "form-error" : "form-success"} role={taskState.status === "error" ? "alert" : "status"}>
+              {taskState.status === "success" && <Check aria-hidden="true" />}{taskState.message}
+            </p>
+          )}
+          <div className="app-form__actions">
+            <button className="button button--quiet" type="button" onClick={() => taskDialog.current?.close()}>Annuler</button>
+            <button className="button button--primary" type="submit" disabled={taskPending}>
+              {taskPending ? "Ajout…" : "Ajouter la tâche"}
+            </button>
+          </div>
+        </form>
+      </dialog>
+    </>
+  );
+}

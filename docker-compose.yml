@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: luigi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: luigi
+      POSTGRES_USER: luigi
+      POSTGRES_PASSWORD: luigi_local_dev
+      PGDATA: /var/lib/postgresql/18/docker
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - luigi-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U luigi -d luigi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  luigi-postgres-data:

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "integrations_workspace_kind_unique" ON "integrations" USING btree ("workspace_id","kind");

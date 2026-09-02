@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Luigi</title>
+  <rect width="512" height="512" rx="112" fill="#6253a3"/>
+  <path d="M118 142h96v178h180v72H118z" fill="#f8f6f0"/>
+  <circle cx="199" cy="392" r="30" fill="#b8e7ca"/>
+  <circle cx="351" cy="392" r="30" fill="#b8e7ca"/>
+</svg>
