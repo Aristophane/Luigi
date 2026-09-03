@@ -1,6 +1,6 @@
 # Agent VPS Luigi
 
-L’agent prend en charge Ubuntu et Debian. Il utilise Python 3 et les commandes système natives, collecte en lecture seule puis initie une requête HTTPS sortante vers Luigi toutes les cinq minutes.
+L’agent prend en charge Ubuntu et Debian. Il utilise Python 3 et les commandes système natives. Le rapport de santé est envoyé toutes les cinq minutes et l’inventaire détaillé du disque toutes les six heures.
 
 ## Installation
 
@@ -14,9 +14,12 @@ Le script crée :
 
 - le compte système sans shell `luigi-agent` ;
 - `/opt/luigi-agent/luigi_agent.py` ;
+- `/opt/luigi-agent/luigi_storage_collector.py`, collecteur local isolé du réseau ;
 - `/etc/luigi-agent.env`, lisible uniquement par root et le groupe agent ;
-- un service `oneshot` systemd durci ;
-- un timer systemd toutes les cinq minutes avec un léger jitter.
+- deux services `oneshot` systemd durcis ;
+- un timer de santé toutes les cinq minutes et un timer d’inventaire toutes les six heures, avec un léger jitter.
+
+Le collecteur disque s’exécute ponctuellement avec les droits de lecture nécessaires, sans accès réseau, avec une priorité basse et une limite de dix minutes. Il écrit un inventaire assaini dans `/var/lib/luigi-agent/storage.json`. Le service principal, non privilégié, se charge ensuite de l’envoyer à Luigi. Aucun contenu de fichier n’est collecté et Luigi ne peut supprimer aucun fichier à distance.
 
 Avant toute modification, il détecte `/etc/os-release`, accepte uniquement Ubuntu ou Debian, puis vérifie systemd, `apt-get`, Python 3, le DNS et la connexion TLS vers Luigi.
 
@@ -27,6 +30,10 @@ sudo systemctl status luigi-agent.service
 sudo systemctl list-timers luigi-agent.timer
 sudo journalctl -u luigi-agent.service --since today
 sudo systemctl start luigi-agent.service
+sudo systemctl status luigi-storage.service
+sudo systemctl list-timers luigi-storage.timer
+sudo journalctl -u luigi-storage.service --since today
+sudo systemctl start luigi-storage.service
 ```
 
 ## Configuration facultative
@@ -48,5 +55,6 @@ Le fichier de sauvegarde est un marqueur dont la date de modification correspond
 - état UFW et réglages SSH explicitement définis ;
 - services systemd sélectionnés ;
 - fraîcheur de sauvegarde si un fichier marqueur est configuré.
+- occupation des principaux répertoires Coolify, Docker, bases, journaux, sauvegardes, applications et système.
 
 Le jeton, les journaux système, les processus et le contenu des fichiers de configuration ne sont jamais inclus dans le rapport.

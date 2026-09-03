@@ -127,7 +127,7 @@ export function VpsAgentSetup({
       {installationComplete ? (
         <div className="agent-connected" role="status">
           <Check aria-hidden="true" />
-          <div><strong>Le VPS transmet ses métriques.</strong><p>La prochaine collecte sera envoyée automatiquement dans environ cinq minutes.</p></div>
+          <div><strong>Le VPS transmet ses métriques.</strong><p>Santé toutes les cinq minutes, inventaire disque détaillé toutes les six heures.</p></div>
         </div>
       ) : state.installCommand ? (
         <div className="agent-credentials" aria-live="polite">
@@ -149,7 +149,7 @@ export function VpsAgentSetup({
           </div>
           <details className="agent-details">
             <summary>Vérifier le script avant de l’exécuter</summary>
-            <p>Le script détecte Ubuntu ou Debian, crée un compte système dédié et installe un timer toutes les cinq minutes.</p>
+            <p>Le script détecte Ubuntu ou Debian, crée un compte système dédié, puis installe un timer de santé toutes les cinq minutes et un inventaire disque isolé toutes les six heures.</p>
             {state.installUrl && <a className="text-link" href={state.installUrl} target="_blank" rel="noreferrer">Ouvrir le script d’installation</a>}
             {state.fallbackCommand && (
               <div className="agent-fallback-command">

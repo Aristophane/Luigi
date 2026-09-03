@@ -171,7 +171,11 @@ export default async function Home() {
   const applicationNames = new Map(allPersistedApplications.map((application) => [application.id, application.name]));
   const mapMaintenanceTask = (task: typeof maintenanceTasksTable.$inferSelect): MaintenanceTask => ({
     id: task.id,
+    applicationId: task.applicationId,
     title: task.title,
+    description: task.description ?? undefined,
+    remediation: task.remediation ?? undefined,
+    verification: task.verification ?? undefined,
     category: task.category,
     severity: task.severity,
     dueLabel: task.dueAt
@@ -181,6 +185,7 @@ export default async function Home() {
     applicationName: task.applicationId ? applicationNames.get(task.applicationId) ?? "Application archivée" : "VPS · Infrastructure",
     status: task.status,
     completedLabel: task.completedAt?.toLocaleString("fr-FR"),
+    createdLabel: task.createdAt.toLocaleString("fr-FR"),
   });
   const maintenanceTasks = persistedTasks.map(mapMaintenanceTask);
   const maintenanceHistory = persistedTaskHistory.map(mapMaintenanceTask);

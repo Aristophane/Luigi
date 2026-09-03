@@ -15,7 +15,9 @@ import urllib.error
 import urllib.request
 import uuid
 
-AGENT_VERSION = "0.2.0"
+AGENT_VERSION = "0.3.0"
+STORAGE_SNAPSHOT = pathlib.Path("/var/lib/luigi-agent/storage.json")
+STORAGE_MARKER = pathlib.Path("/var/lib/luigi-agent/state/last-storage-snapshot")
 
 
 def read_text(path: str) -> str:
@@ -171,8 +173,8 @@ def build_report() -> dict[str, object]:
     return report
 
 
-def send(report: dict[str, object]) -> None:
-    endpoint = os.environ["LUIGI_ENDPOINT"]
+def send(report: dict[str, object], endpoint: str | None = None) -> None:
+    endpoint = endpoint or os.environ["LUIGI_ENDPOINT"]
     if not endpoint.startswith("https://") and os.environ.get("LUIGI_ALLOW_INSECURE_HTTP") != "1":
         raise RuntimeError("LUIGI_ENDPOINT doit utiliser HTTPS")
     request = urllib.request.Request(
@@ -193,10 +195,31 @@ def send(report: dict[str, object]) -> None:
         raise RuntimeError(f"Luigi a refusé le rapport (HTTP {error.code})") from None
 
 
+def send_pending_storage_snapshot() -> bool:
+    try:
+        snapshot = json.loads(STORAGE_SNAPSHOT.read_text(encoding="utf-8"))
+        snapshot_id = snapshot.get("snapshotId")
+        if not isinstance(snapshot_id, str) or snapshot_id == read_text(str(STORAGE_MARKER)).strip():
+            return False
+        report_endpoint = os.environ["LUIGI_ENDPOINT"]
+        storage_endpoint = report_endpoint.removesuffix("/report") + "/storage"
+        send(snapshot, storage_endpoint)
+        STORAGE_MARKER.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        STORAGE_MARKER.write_text(snapshot_id, encoding="utf-8")
+        return True
+    except FileNotFoundError:
+        return False
+
+
 if __name__ == "__main__":
     try:
         send(build_report())
         print("Rapport envoyé à Luigi.")
+        try:
+            if send_pending_storage_snapshot():
+                print("Inventaire disque envoyé à Luigi.")
+        except Exception as error:
+            print(f"Inventaire disque en attente : {error}", file=os.sys.stderr)
     except Exception as error:  # Le journal ne contient jamais le jeton ni le rapport brut.
         print(f"Échec de la collecte Luigi : {error}", file=os.sys.stderr)
         raise SystemExit(1)

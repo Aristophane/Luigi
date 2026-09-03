@@ -59,7 +59,11 @@ export interface VpsOverview {
 
 export interface MaintenanceTask {
   id: string;
+  applicationId: string | null;
   title: string;
+  description?: string;
+  remediation?: string;
+  verification?: string;
   category: "security" | "dependency" | "capacity" | "backup" | "lifecycle";
   severity: "critical" | "high" | "medium" | "low";
   dueLabel: string;
@@ -67,6 +71,7 @@ export interface MaintenanceTask {
   applicationName: string;
   status: "open" | "planned" | "in_progress" | "done" | "dismissed";
   completedLabel?: string;
+  createdLabel: string;
 }
 
 export interface ActivityEvent {

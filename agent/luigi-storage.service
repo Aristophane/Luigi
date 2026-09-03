@@ -1,31 +1,31 @@
 [Unit]
-Description=Collecteur de supervision Luigi
-After=network-online.target
-Wants=network-online.target
+Description=Luigi VPS storage inventory
+After=local-fs.target
 
 [Service]
 Type=oneshot
-User=luigi-agent
+User=root
 Group=luigi-agent
 EnvironmentFile=/etc/luigi-agent.env
-ExecStart=/usr/bin/python3 /opt/luigi-agent/luigi_agent.py
+ExecStart=/usr/bin/python3 /opt/luigi-agent/luigi_storage_collector.py
+PrivateNetwork=true
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true
 ProtectControlGroups=true
-ProtectHome=true
+ProtectHome=read-only
 ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/luigi-agent/state
-RestrictAddressFamilies=AF_INET AF_INET6
+ReadWritePaths=/var/lib/luigi-agent
+RestrictAddressFamilies=AF_UNIX
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
-UMask=0077
-
-[Install]
-WantedBy=multi-user.target
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=10min
+UMask=0027

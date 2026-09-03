@@ -9,6 +9,9 @@ const artifacts = {
   "agent.py": { filename: "luigi_agent.py", contentType: "text/x-python; charset=utf-8" },
   service: { filename: "luigi-agent.service", contentType: "text/plain; charset=utf-8" },
   timer: { filename: "luigi-agent.timer", contentType: "text/plain; charset=utf-8" },
+  "storage.py": { filename: "luigi_storage_collector.py", contentType: "text/x-python; charset=utf-8" },
+  "storage-service": { filename: "luigi-storage.service", contentType: "text/plain; charset=utf-8" },
+  "storage-timer": { filename: "luigi-storage.timer", contentType: "text/plain; charset=utf-8" },
 } as const;
 
 export async function GET(

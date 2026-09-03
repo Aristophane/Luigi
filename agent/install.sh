@@ -112,6 +112,12 @@ download "${SERVER}/install/vps/service" "${temporary_directory}/luigi-agent.ser
   || fail "impossible de télécharger le service systemd."
 download "${SERVER}/install/vps/timer" "${temporary_directory}/luigi-agent.timer" \
   || fail "impossible de télécharger le timer systemd."
+download "${SERVER}/install/vps/storage.py" "${temporary_directory}/luigi_storage_collector.py" \
+  || fail "impossible de télécharger le collecteur disque."
+download "${SERVER}/install/vps/storage-service" "${temporary_directory}/luigi-storage.service" \
+  || fail "impossible de télécharger le service d’inventaire disque."
+download "${SERVER}/install/vps/storage-timer" "${temporary_directory}/luigi-storage.timer" \
+  || fail "impossible de télécharger le timer d’inventaire disque."
 
 step 3 "Enrôlement de l’agent"
 if ! enrollment_response="$(enroll "${SERVER}/api/agent/v1/enroll")"; then
@@ -128,7 +134,9 @@ step 4 "Installation du service"
 id -u luigi-agent >/dev/null 2>&1 \
   || useradd --system --home-dir /var/lib/luigi-agent --create-home --shell /usr/sbin/nologin luigi-agent
 install -d -o root -g root -m 0755 /opt/luigi-agent
+install -d -o luigi-agent -g luigi-agent -m 0700 /var/lib/luigi-agent/state
 install -o root -g root -m 0755 "${temporary_directory}/luigi_agent.py" /opt/luigi-agent/luigi_agent.py
+install -o root -g root -m 0755 "${temporary_directory}/luigi_storage_collector.py" /opt/luigi-agent/luigi_storage_collector.py
 
 umask 0077
 {
@@ -144,8 +152,11 @@ unset ENROLLMENT_CODE LUIGI_TOKEN enrollment_response parsed_credentials
 
 install -o root -g root -m 0644 "${temporary_directory}/luigi-agent.service" /etc/systemd/system/luigi-agent.service
 install -o root -g root -m 0644 "${temporary_directory}/luigi-agent.timer" /etc/systemd/system/luigi-agent.timer
+install -o root -g root -m 0644 "${temporary_directory}/luigi-storage.service" /etc/systemd/system/luigi-storage.service
+install -o root -g root -m 0644 "${temporary_directory}/luigi-storage.timer" /etc/systemd/system/luigi-storage.timer
 systemctl daemon-reload
 systemctl enable --now luigi-agent.timer >/dev/null
+systemctl enable --now luigi-storage.timer >/dev/null
 
 step 5 "Premier rapport"
 if ! systemctl start luigi-agent.service; then
@@ -153,6 +164,10 @@ if ! systemctl start luigi-agent.service; then
   echo "Diagnostic : sudo journalctl -u luigi-agent.service -n 50 --no-pager" >&2
   exit 1
 fi
+if ! systemctl start --no-block luigi-storage.service; then
+  echo "Le rapport de santé fonctionne, mais l’inventaire disque n’a pas pu démarrer." >&2
+  echo "Diagnostic : sudo journalctl -u luigi-storage.service -n 50 --no-pager" >&2
+fi
 
 echo
-echo "VPS connecté à Luigi. Le prochain rapport sera envoyé dans environ cinq minutes."
+echo "VPS connecté à Luigi. L’inventaire disque démarre en arrière-plan puis sera actualisé toutes les six heures."

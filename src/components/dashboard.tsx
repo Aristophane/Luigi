@@ -56,8 +56,8 @@ const navigation = [
   { label: "Vue générale", icon: LayoutDashboard, href: "#overview" },
   { label: "Applications", icon: CloudCog, href: "#applications" },
   { label: "VPS", icon: Server, href: "#vps" },
-  { label: "Maintenance", icon: ListTodo, href: "#maintenance" },
-  { label: "Sécurité", icon: ShieldCheck, href: "#security" },
+  { label: "Maintenance", icon: ListTodo, href: "/maintenance" },
+  { label: "Sécurité", icon: ShieldCheck, href: "/maintenance?category=security" },
 ];
 
 const severityLabels = {
@@ -524,6 +524,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                 </div>
                 <div className="section-heading__actions">
                   <StatusDot status={vps.status} />
+                  <Link className="text-link" href="/storage"><HardDrive aria-hidden="true" /> Espace disque</Link>
                   <Link className="text-link" href="/settings/vps">Configurer</Link>
                 </div>
               </div>
@@ -580,6 +581,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                 </div>
                 <div className="section-heading__actions">
                   <span className="section-count">{visibleTasks.length}</span>
+                  <Link className="text-link" href="/maintenance">Piloter <ChevronRight aria-hidden="true" /></Link>
                   <button className="icon-button" type="button" onClick={() => taskDialog.current?.showModal()} aria-label="Ajouter une tâche manuelle">
                     <Plus aria-hidden="true" />
                   </button>
@@ -812,6 +814,10 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
             <input name="title" required minLength={3} maxLength={140} placeholder="Ex. Tester la restauration de la sauvegarde" />
           </label>
           <label>
+            <span>Contexte et impact</span>
+            <textarea name="description" maxLength={2000} rows={3} placeholder="Pourquoi cette action est nécessaire et quel service est exposé ?" />
+          </label>
+          <label>
             <span>Élément concerné</span>
             <select name="applicationId" defaultValue="infrastructure">
               <option value="infrastructure">VPS · Infrastructure générale</option>
@@ -846,6 +852,17 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
             <span>Échéance facultative</span>
             <input name="dueDate" type="date" />
           </label>
+          <details className="task-guidance-fields">
+            <summary>Ajouter une procédure et une vérification</summary>
+            <label>
+              <span>Étapes à réaliser</span>
+              <textarea name="remediation" maxLength={4000} rows={4} placeholder={"Une étape par ligne\nEx. Appliquer les mises à jour dans une fenêtre contrôlée"} />
+            </label>
+            <label>
+              <span>Contrôle de sortie</span>
+              <textarea name="verification" maxLength={2000} rows={3} placeholder="Comment confirmer que l’action est réellement terminée ?" />
+            </label>
+          </details>
           {taskState.message && (
             <p className={taskState.status === "error" ? "form-error" : "form-success"} role={taskState.status === "error" ? "alert" : "status"}>
               {taskState.status === "success" && <Check aria-hidden="true" />}{taskState.message}

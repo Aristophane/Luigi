@@ -74,4 +74,8 @@ L’agent Ubuntu 24.04 et Debian peut maintenant être enrôlé depuis `/setting
 
 La gestion opérationnelle relie maintenant les maintenances aux applications, conserve leur historique, permet leur réouverture et archive une application sans effacer ses traces. Le cockpit affiche également la fraîcheur et la cadence des rapports VPS.
 
+L’explorateur `/storage` ajoute un inventaire disque détaillé toutes les six heures : carte proportionnelle inspirée de WinDirStat, table accessible, évolution entre deux scans, attribution automatique ou manuelle aux applications et création de tâches de maintenance. Les instantanés sont conservés 90 jours et aucune suppression de fichier n’est exposée dans Luigi.
+
+Le centre `/maintenance` classe les actions par application, criticité, catégorie et état. Chaque opération expose son contexte, une procédure, les contrôles à effectuer avant clôture et son journal d’audit. Les actions de sécurité disposent d’un accès direct et les notifications correspondantes ouvrent désormais ce niveau de détail.
+
 Le Web Push persistant et le centre de notifications interactif sont branchés. Les alertes critiques ou élevées, les sources silencieuses et les récupérations sont dédupliquées puis distribuées aux navigateurs abonnés. Le prochain incrément prioritaire porte sur les scans planifiés de dépendances et l’agrégation des vulnérabilités OSV ou Dependabot.

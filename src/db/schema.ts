@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -259,6 +260,8 @@ export const maintenanceTasks = pgTable(
     findingId: uuid("finding_id").references(() => findings.id, { onDelete: "set null" }),
     title: text("title").notNull(),
     description: text("description"),
+    remediation: text("remediation"),
+    verification: text("verification"),
     category: findingKind("category").notNull(),
     severity: taskSeverity("severity").default("medium").notNull(),
     status: taskStatus("status").default("open").notNull(),
@@ -375,5 +378,45 @@ export const vpsMetricSamples = pgTable(
   (table) => [
     uniqueIndex("vps_metric_samples_report_unique").on(table.reportId),
     index("vps_metric_samples_workspace_time_idx").on(table.workspaceId, table.observedAt),
+  ],
+);
+
+export const vpsStorageSnapshots = pgTable(
+  "vps_storage_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    snapshotId: uuid("snapshot_id").notNull(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    hostname: text("hostname").notNull(),
+    totalBytes: bigint("total_bytes", { mode: "number" }).notNull(),
+    usedBytes: bigint("used_bytes", { mode: "number" }).notNull(),
+    freeBytes: bigint("free_bytes", { mode: "number" }).notNull(),
+    scanDurationMs: integer("scan_duration_ms").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().default({}).notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("vps_storage_snapshots_snapshot_unique").on(table.snapshotId),
+    index("vps_storage_snapshots_workspace_time_idx").on(table.workspaceId, table.observedAt),
+  ],
+);
+
+export const storageResourceMappings = pgTable(
+  "storage_resource_mappings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    resourceKey: text("resource_key").notNull(),
+    applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("storage_resource_mappings_workspace_resource_unique").on(table.workspaceId, table.resourceKey),
+    index("storage_resource_mappings_application_idx").on(table.applicationId),
   ],
 );

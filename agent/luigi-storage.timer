@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh Luigi VPS storage inventory every six hours
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+Persistent=true
+Unit=luigi-storage.service
+
+[Install]
+WantedBy=timers.target

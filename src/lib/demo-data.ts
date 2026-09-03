@@ -90,6 +90,7 @@ export const serverMetrics: ServerMetric[] = [
 export const maintenanceTasks: MaintenanceTask[] = [
   {
     id: "task-disk",
+    applicationId: null,
     title: "Examiner la croissance du disque",
     category: "capacity",
     severity: "medium",
@@ -97,9 +98,11 @@ export const maintenanceTasks: MaintenanceTask[] = [
     source: "VPS production",
     applicationName: "VPS production",
     status: "open",
+    createdLabel: "3 septembre 2026",
   },
   {
     id: "task-nuxt",
+    applicationId: "app-lumen",
     title: "Valider la mise à jour Nuxt 4.2",
     category: "dependency",
     severity: "low",
@@ -107,9 +110,11 @@ export const maintenanceTasks: MaintenanceTask[] = [
     source: "Lumen Studio · Renovate",
     applicationName: "Lumen Studio",
     status: "planned",
+    createdLabel: "2 septembre 2026",
   },
   {
     id: "task-backup",
+    applicationId: null,
     title: "Planifier le test de restauration",
     category: "backup",
     severity: "medium",
@@ -117,6 +122,7 @@ export const maintenanceTasks: MaintenanceTask[] = [
     source: "Récurrence trimestrielle",
     applicationName: "VPS production",
     status: "open",
+    createdLabel: "1 septembre 2026",
   },
 ];
 

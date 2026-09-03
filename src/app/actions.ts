@@ -280,6 +280,7 @@ export async function completeMaintenanceTask(taskId: string) {
     });
   });
   revalidatePath("/");
+  revalidatePath("/maintenance");
 }
 
 export async function reopenMaintenanceTask(taskId: string) {
@@ -315,10 +316,47 @@ export async function reopenMaintenanceTask(taskId: string) {
     });
   });
   revalidatePath("/");
+  revalidatePath("/maintenance");
+}
+
+export async function setMaintenanceTaskStatus(formData: FormData) {
+  const parsed = z.object({
+    taskId: z.string().uuid(),
+    nextStatus: z.enum(["open", "planned", "in_progress", "dismissed"]),
+  }).safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) return;
+  const { session, workspaceId } = await requireWorkspace();
+  const changedAt = new Date();
+  await db.transaction(async (transaction) => {
+    const [task] = await transaction.select({ status: maintenanceTasks.status }).from(maintenanceTasks).where(and(
+      eq(maintenanceTasks.id, parsed.data.taskId),
+      eq(maintenanceTasks.workspaceId, workspaceId),
+    )).limit(1);
+    if (!task || task.status === parsed.data.nextStatus) return;
+    await transaction.update(maintenanceTasks).set({
+      status: parsed.data.nextStatus,
+      completedAt: parsed.data.nextStatus === "dismissed" ? changedAt : null,
+      updatedAt: changedAt,
+    }).where(eq(maintenanceTasks.id, parsed.data.taskId));
+    await transaction.insert(maintenanceTaskEvents).values({
+      workspaceId,
+      taskId: parsed.data.taskId,
+      actorId: session.user.id,
+      action: parsed.data.nextStatus === "dismissed" ? "dismissed" : "status_changed",
+      previousStatus: task.status,
+      nextStatus: parsed.data.nextStatus,
+      note: "Statut modifié depuis le centre de maintenance.",
+    });
+  });
+  revalidatePath("/");
+  revalidatePath("/maintenance");
 }
 
 const taskSchema = z.object({
   title: z.string().trim().min(3, "Le titre doit contenir au moins 3 caractères.").max(140),
+  description: z.string().trim().max(2000).optional(),
+  remediation: z.string().trim().max(4000).optional(),
+  verification: z.string().trim().max(2000).optional(),
   category: z.enum(["security", "dependency", "capacity", "backup", "lifecycle"]),
   severity: z.enum(["critical", "high", "medium", "low"]),
   applicationId: z.union([z.string().uuid(), z.literal("infrastructure")]).default("infrastructure"),
@@ -355,6 +393,9 @@ export async function createMaintenanceTask(
       workspaceId,
       applicationId,
       title: parsed.data.title,
+      description: parsed.data.description || null,
+      remediation: parsed.data.remediation || null,
+      verification: parsed.data.verification || null,
       category: parsed.data.category,
       severity: parsed.data.severity,
       automatic: false,
@@ -370,6 +411,7 @@ export async function createMaintenanceTask(
     });
   });
   revalidatePath("/");
+  revalidatePath("/maintenance");
   return { status: "success", message: "Tâche ajoutée à la liste de maintenance." };
 }
 

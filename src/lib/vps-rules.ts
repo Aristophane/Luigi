@@ -132,7 +132,7 @@ async function applyRule(workspaceId: string, rule: Rule, observedAt: Date) {
       title: rule.findingTitle,
       body: rule.description,
       severity: rule.severity,
-      targetUrl: taskId ? `/#maintenance-task-${taskId}` : "/#vps",
+      targetUrl: taskId ? `/maintenance#maintenance-task-${taskId}` : "/#vps",
       fingerprint: `finding:${rule.fingerprint}`,
     });
   }

@@ -412,6 +412,7 @@ Une règle génère une clé stable, par exemple `project:resource:category:fing
 - tâches automatiques, récurrentes et manuelles, reliées à l'application concernée ;
 - responsables, échéances, runbooks, historique des changements et réouverture d'une tâche clôturée par erreur ;
 - centre de notifications interne, temps réel dans l'application et Web Push.
+- centre de maintenance filtrable par application, criticité, catégorie et statut, avec procédure, vérification et journal détaillés ;
 
 ### Incrément 2.1 — gestion et lisibilité opérationnelles
 
@@ -419,6 +420,15 @@ Une règle génère une clé stable, par exemple `project:resource:category:fing
 - accès aux applications archivées ;
 - affichage dans la vue VPS de la fréquence de collecte, du dernier rapport, de la prochaine collecte attendue et de l'état de fraîcheur ;
 - filtres d'historique des maintenances par application, ressource, statut et période.
+
+### Incrément 2.2 — cartographie du stockage VPS
+
+- inventaire détaillé toutes les six heures, séparé du rapport de santé ;
+- collecteur ponctuel privilégié, local, sans réseau et borné à dix minutes ;
+- carte proportionnelle et table accessible des principaux consommateurs ;
+- attribution automatique ou manuelle des volumes et répertoires aux applications ;
+- comparaison avec le scan précédent et conservation de 90 jours ;
+- création d’une maintenance depuis un élément, sans action de suppression distante.
 
 ### Incrément 3 — sécurité et chaîne de mise à jour
 
@@ -457,6 +467,7 @@ Une règle génère une clé stable, par exemple `project:resource:category:fing
 - une tâche terminée reste consultable et peut être rouverte sans perdre son historique ;
 - la suppression d'une application arrête ses contrôles sans effacer ses incidents ni ses opérations passées ;
 - la vue VPS affiche la fréquence attendue, l'âge du dernier rapport et un avertissement lorsque la donnée est périmée.
+- l’inventaire disque distingue les ressources applicatives des couches Docker partagées et reste utilisable sous forme de table.
 
 ## Questions propres à chaque projet
 
