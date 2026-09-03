@@ -36,10 +36,11 @@ import { LivingRail } from "@/components/living-rail";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
 import { StatusDot } from "@/components/status-dot";
 import { ScanApplicationButton } from "@/components/scan-application-button";
-import type { ActivityEvent, DashboardNotification, MaintenanceTask, MonitoredApplication, VpsOverview } from "@/lib/domain";
+import type { ActivityEvent, DashboardNotification, GitHubRepositoryOption, MaintenanceTask, MonitoredApplication, VpsOverview } from "@/lib/domain";
 
 type Theme = "light" | "dark";
 type PushState = "idle" | "enabled" | "denied" | "unsupported";
+type RepositoryLoadState = "idle" | "loading" | "success" | "error";
 
 const navigation = [
   { label: "Vue générale", icon: LayoutDashboard, href: "#overview" },
@@ -75,6 +76,9 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
   const [lastRefresh, setLastRefresh] = useState("il y a 38 secondes");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pushState, setPushState] = useState<PushState>("idle");
+  const [githubRepositories, setGitHubRepositories] = useState<GitHubRepositoryOption[]>([]);
+  const [repositoryLoadState, setRepositoryLoadState] = useState<RepositoryLoadState>("idle");
+  const [repositoryLoadMessage, setRepositoryLoadMessage] = useState("");
   const [applicationState, applicationAction, applicationPending] = useActionState(
     createApplication,
     initialApplicationState,
@@ -82,6 +86,9 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
   const [taskState, taskAction, taskPending] = useActionState(createMaintenanceTask, initialTaskState);
   const appDialog = useRef<HTMLDialogElement>(null);
   const appForm = useRef<HTMLFormElement>(null);
+  const applicationNameInput = useRef<HTMLInputElement>(null);
+  const applicationBranchInput = useRef<HTMLInputElement>(null);
+  const applicationRepositoryInput = useRef<HTMLInputElement>(null);
   const taskDialog = useRef<HTMLDialogElement>(null);
   const taskForm = useRef<HTMLFormElement>(null);
 
@@ -143,6 +150,50 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
     } finally {
       setIsRefreshing(false);
     }
+  }
+
+  async function loadGitHubRepositories() {
+    if (!githubIntegrationLabel || repositoryLoadState === "loading" || repositoryLoadState === "success") return;
+
+    setRepositoryLoadState("loading");
+    setRepositoryLoadMessage("");
+
+    try {
+      const response = await fetch("/api/github/repositories", {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const body = await response.json() as {
+        repositories?: GitHubRepositoryOption[];
+        message?: string;
+      };
+
+      if (!response.ok || !Array.isArray(body.repositories)) {
+        throw new Error(body.message ?? "La liste des dépôts est indisponible.");
+      }
+
+      setGitHubRepositories(body.repositories);
+      setRepositoryLoadState("success");
+    } catch (error) {
+      setRepositoryLoadState("error");
+      setRepositoryLoadMessage(error instanceof Error
+        ? error.message
+        : "La liste des dépôts est indisponible.");
+    }
+  }
+
+  function openApplicationDialog() {
+    appDialog.current?.showModal();
+    void loadGitHubRepositories();
+  }
+
+  function selectGitHubRepository(fullName: string) {
+    const repository = githubRepositories.find((item) => item.fullName === fullName);
+    if (!repository) return;
+
+    if (applicationNameInput.current) applicationNameInput.current.value = repository.name;
+    if (applicationBranchInput.current) applicationBranchInput.current.value = repository.defaultBranch;
+    if (applicationRepositoryInput.current) applicationRepositoryInput.current.value = repository.fullName;
   }
 
   const overviewStatus = applications.some((application) => application.status === "critical")
@@ -259,7 +310,7 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
                   {notifications.length === 0 && <p className="notifications-panel__empty">Aucune nouvelle notification.</p>}
                 </div>
               </details>
-              <button className="button button--primary" type="button" onClick={() => appDialog.current?.showModal()}>
+              <button className="button button--primary" type="button" onClick={openApplicationDialog}>
                 <Plus aria-hidden="true" />
                 Ajouter une application
               </button>
@@ -321,7 +372,7 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
                     <CloudCog aria-hidden="true" />
                     <strong>Aucune application sur la voie.</strong>
                     <span>Ajoute la première pour préparer ses contrôles et l’analyse de son dépôt.</span>
-                    <button className="button button--secondary" type="button" onClick={() => appDialog.current?.showModal()}>
+                    <button className="button button--secondary" type="button" onClick={openApplicationDialog}>
                       <Plus aria-hidden="true" /> Ajouter une application
                     </button>
                   </div>
@@ -486,9 +537,51 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
           <p>Relie son URL à un dépôt GitHub. Luigi proposera ensuite les technologies à surveiller.</p>
         </div>
         <form className="app-form" action={applicationAction} ref={appForm}>
+          {githubIntegrationLabel && (
+            <div className="repository-picker">
+              <label>
+                <span>Dépôt détecté</span>
+                <select
+                  defaultValue=""
+                  disabled={repositoryLoadState !== "success" || githubRepositories.length === 0}
+                  onChange={(event) => selectGitHubRepository(event.target.value)}
+                >
+                  <option value="">
+                    {repositoryLoadState === "loading"
+                      ? "Chargement des dépôts…"
+                      : repositoryLoadState === "error"
+                        ? "Dépôts indisponibles"
+                        : githubRepositories.length === 0 && repositoryLoadState === "success"
+                          ? "Aucun dépôt accessible"
+                          : "Sélectionner un dépôt…"}
+                  </option>
+                  {githubRepositories.map((repository) => (
+                    <option key={repository.fullName} value={repository.fullName}>
+                      {repository.fullName}{repository.private ? " · privé" : ""}{repository.archived ? " · archivé" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="repository-picker__status" aria-live="polite">
+                {repositoryLoadState === "loading" && <><RefreshCw className="spin" aria-hidden="true" /> Lecture des dépôts autorisés…</>}
+                {repositoryLoadState === "success" && githubRepositories.length > 0 && (
+                  <><Check aria-hidden="true" /> {githubRepositories.length} dépôt{githubRepositories.length > 1 ? "s" : ""} accessible{githubRepositories.length > 1 ? "s" : ""}. La sélection préremplit les champs ci-dessous.</>
+                )}
+                {repositoryLoadState === "success" && githubRepositories.length === 0 && (
+                  <>Aucun dépôt n’est autorisé pour ce jeton. Tu peux utiliser la saisie manuelle.</>
+                )}
+                {repositoryLoadState === "error" && (
+                  <>
+                    <span>{repositoryLoadMessage}</span>
+                    <button className="text-button" type="button" onClick={() => void loadGitHubRepositories()}>Réessayer</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           <label>
             <span>Nom de l’application</span>
-            <input name="name" required placeholder="Ex. Site vitrine Thermidor" />
+            <input ref={applicationNameInput} name="name" required placeholder="Ex. Site vitrine Thermidor" />
           </label>
           <div className="form-grid">
             <label>
@@ -501,7 +594,7 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
             </label>
             <label>
               <span>Branche suivie</span>
-              <input name="branch" defaultValue="main" required />
+              <input ref={applicationBranchInput} name="branch" defaultValue="main" required />
             </label>
           </div>
           <label>
@@ -510,7 +603,7 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
           </label>
           <label>
             <span>Dépôt GitHub</span>
-            <span className="input-with-icon"><GitBranch aria-hidden="true" /><input name="repository" required placeholder="organisation/depot" /></span>
+            <span className="input-with-icon"><GitBranch aria-hidden="true" /><input ref={applicationRepositoryInput} name="repository" required placeholder="organisation/depot" /></span>
           </label>
           {applicationState.message && (
             <p className={applicationState.status === "error" ? "form-error" : "form-success"} role={applicationState.status === "error" ? "alert" : "status"}>

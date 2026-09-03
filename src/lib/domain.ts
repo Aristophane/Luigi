@@ -1,5 +1,13 @@
 export type HealthStatus = "healthy" | "warning" | "critical" | "unknown";
 
+export type GitHubRepositoryOption = {
+  name: string;
+  fullName: string;
+  defaultBranch: string;
+  private: boolean;
+  archived: boolean;
+};
+
 export type TechnologySource = "detected" | "declared" | "confirmed" | "ignored";
 
 export interface Technology {

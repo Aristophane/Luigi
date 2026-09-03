@@ -1243,6 +1243,49 @@ h3 {
   color: var(--text-tertiary);
 }
 
+.repository-picker {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.7rem;
+  background: var(--surface-subtle);
+}
+
+.repository-picker__status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-height: 1.25rem;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.repository-picker__status svg {
+  flex: 0 0 auto;
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.repository-picker__status .text-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  font-size: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.repository-picker__status .text-button:hover {
+  color: var(--brand-hover);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
 .input-with-icon {
   position: relative;
 }

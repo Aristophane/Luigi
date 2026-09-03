@@ -13,6 +13,7 @@ export class GitHubApiError extends Error {
 
 type GitHubUser = { login: string };
 type GitHubRepository = {
+  name: string;
   default_branch: string;
   full_name: string;
   private: boolean;
@@ -62,6 +63,34 @@ function repositoryPath(repository: string) {
 
 export async function verifyGitHubToken(token: string) {
   return githubRequest<GitHubUser>("/user", token);
+}
+
+export async function listGitHubRepositories(token: string) {
+  const repositories: GitHubRepository[] = [];
+  const perPage = 100;
+
+  for (let page = 1; page <= 10; page += 1) {
+    const parameters = new URLSearchParams({
+      visibility: "all",
+      affiliation: "owner,collaborator,organization_member",
+      sort: "pushed",
+      direction: "desc",
+      per_page: String(perPage),
+      page: String(page),
+    });
+    const result = await githubRequest<GitHubRepository[]>(`/user/repos?${parameters}`, token);
+    repositories.push(...result);
+
+    if (result.length < perPage) break;
+  }
+
+  return repositories.map((repository) => ({
+    name: repository.name,
+    fullName: repository.full_name,
+    defaultBranch: repository.default_branch,
+    private: repository.private,
+    archived: repository.archived,
+  }));
 }
 
 export async function getGitHubRepository(repository: string, token?: string) {
