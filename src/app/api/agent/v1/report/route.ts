@@ -91,6 +91,7 @@ export async function POST(request: Request) {
         hostname: parsed.data.hostname,
         schemaVersion: parsed.data.schemaVersion,
         sourceObservedAt: parsed.data.observedAt,
+        system: parsed.data.system,
       },
       lastSyncedAt: receivedAt,
       updatedAt: receivedAt,

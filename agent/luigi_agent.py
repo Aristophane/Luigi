@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collecte en lecture seule pour Luigi sur Ubuntu 24.04."""
+"""Collecte en lecture seule pour Luigi sur Ubuntu et Debian."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+
+AGENT_VERSION = "0.2.0"
 
 
 def read_text(path: str) -> str:
@@ -125,6 +127,22 @@ def service_states() -> list[dict[str, str | bool]]:
     return states
 
 
+def system_information() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in read_text("/etc/os-release").splitlines():
+        key, separator, value = raw_line.partition("=")
+        if separator and key:
+            values[key] = value.strip().strip('"').strip("'")
+    distribution = values.get("ID", "unknown").lower()
+    return {
+        "distribution": distribution if distribution in {"ubuntu", "debian"} else "unknown",
+        "distributionVersion": values.get("VERSION_ID", "unknown")[:40],
+        "distributionLabel": values.get("PRETTY_NAME", distribution)[:120],
+        "architecture": os.uname().machine[:40],
+        "agentVersion": AGENT_VERSION,
+    }
+
+
 def build_report() -> dict[str, object]:
     memory, swap = memory_metrics()
     disk = shutil.disk_usage("/")
@@ -134,6 +152,7 @@ def build_report() -> dict[str, object]:
         "agentId": os.environ["LUIGI_AGENT_ID"],
         "hostname": os.uname().nodename,
         "observedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "system": system_information(),
         "metrics": {
             "cpuPercent": cpu_percent(),
             "memoryPercent": memory,
@@ -163,7 +182,7 @@ def send(report: dict[str, object]) -> None:
         headers={
             "Authorization": f"Bearer {os.environ['LUIGI_TOKEN']}",
             "Content-Type": "application/json",
-            "User-Agent": "Luigi-VPS-Agent/0.1",
+            "User-Agent": f"Luigi-VPS-Agent/{AGENT_VERSION}",
         },
     )
     try:

@@ -43,6 +43,13 @@
       "when": 1788371136125,
       "tag": "0005_odd_ghost_rider",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788446594866,
+      "tag": "0006_aspiring_morlun",
+      "breakpoints": true
     }
   ]
 }

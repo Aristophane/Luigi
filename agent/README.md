@@ -1,13 +1,14 @@
 # Agent VPS Luigi
 
-L’agent cible Ubuntu Server 24.04 et utilise uniquement Python 3 et les commandes système déjà présentes. Il collecte en lecture seule puis initie une requête sortante vers Luigi toutes les cinq minutes.
+L’agent prend en charge Ubuntu et Debian. Il utilise Python 3 et les commandes système natives, collecte en lecture seule puis initie une requête HTTPS sortante vers Luigi toutes les cinq minutes.
 
 ## Installation
 
-1. Dans Luigi, ouvre **Paramètres → VPS Ubuntu** et crée un jeton agent.
-2. Transfère le dossier `agent/` de ce dépôt sur le VPS.
-3. Depuis la racine du dépôt transféré, exécute la commande affichée par Luigi.
-4. Saisis le jeton lorsque le script le demande. Il n’est pas ajouté à l’historique du shell.
+1. Dans Luigi, ouvre **Paramètres → VPS** et sélectionne **Connecter mon VPS**.
+2. Copie l’unique commande affichée et colle-la dans le terminal du VPS.
+3. Laisse la page ouverte : elle confirmera automatiquement l’arrivée du premier rapport.
+
+La commande télécharge l’installateur depuis ton instance Luigi. Elle contient un code aléatoire valable dix minutes et utilisable une seule fois. Le jeton permanent est remis directement à l’agent via HTTPS et n’apparaît jamais dans le terminal ou l’interface.
 
 Le script crée :
 
@@ -16,6 +17,8 @@ Le script crée :
 - `/etc/luigi-agent.env`, lisible uniquement par root et le groupe agent ;
 - un service `oneshot` systemd durci ;
 - un timer systemd toutes les cinq minutes avec un léger jitter.
+
+Avant toute modification, il détecte `/etc/os-release`, accepte uniquement Ubuntu ou Debian, puis vérifie systemd, `apt-get`, Python 3, le DNS et la connexion TLS vers Luigi.
 
 Commandes utiles :
 

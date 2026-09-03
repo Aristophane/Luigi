@@ -8,6 +8,13 @@ export const vpsReportSchema = z.object({
   agentId: z.string().uuid(),
   hostname: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9._-]+$/),
   observedAt: z.iso.datetime({ offset: true }),
+  system: z.object({
+    distribution: z.enum(["ubuntu", "debian", "unknown"]),
+    distributionVersion: z.string().trim().min(1).max(40),
+    distributionLabel: z.string().trim().min(1).max(120),
+    architecture: z.string().trim().min(1).max(40),
+    agentVersion: z.string().trim().min(1).max(40),
+  }).optional(),
   metrics: z.object({
     cpuPercent: percentage,
     memoryPercent: percentage,

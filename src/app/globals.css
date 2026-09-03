@@ -1649,6 +1649,15 @@ h3 {
   content: "";
 }
 
+.agent-steps--four {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.agent-steps--four::before {
+  right: calc(12.5% + var(--space-6));
+  left: calc(12.5% + var(--space-6));
+}
+
 .agent-step {
   position: relative;
   z-index: 1;
@@ -1670,6 +1679,10 @@ h3 {
   background: var(--surface-raised);
   font-size: 0.7rem;
   font-weight: 800;
+}
+
+.agent-step > span svg {
+  width: 0.78rem;
 }
 
 .agent-step strong {
@@ -1836,6 +1849,97 @@ h3 {
   margin: 0;
   color: var(--text-tertiary);
   font-size: 0.72rem;
+}
+
+.copy-field--command code {
+  min-width: 0;
+  font-size: 0.68rem;
+}
+
+.agent-waiting,
+.agent-connected {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.agent-waiting p,
+.agent-connected p {
+  display: flex;
+  margin: 0;
+  flex-direction: column;
+}
+
+.agent-waiting small,
+.agent-connected p {
+  margin-top: var(--space-1);
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+}
+
+.agent-waiting__signal {
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 0.16rem solid var(--healthy-soft);
+  border-radius: 50%;
+  background: var(--healthy);
+  box-sizing: content-box;
+  animation: pulse-opacity 1.8s ease-in-out infinite;
+}
+
+.agent-waiting--expired .agent-waiting__signal {
+  background: var(--warning);
+  animation: none;
+}
+
+.agent-waiting--expired .button {
+  margin-left: auto;
+}
+
+.agent-connected {
+  padding: var(--space-5) var(--space-6);
+  border-top: 1px solid color-mix(in oklch, var(--healthy), transparent 75%);
+  background: var(--healthy-soft);
+  color: var(--healthy);
+}
+
+.agent-connected > svg {
+  width: 1.1rem;
+}
+
+.agent-connected div > p {
+  color: var(--text-secondary);
+}
+
+.agent-details {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.agent-details summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.agent-details p {
+  margin: var(--space-3) 0 var(--space-2);
+  color: var(--text-tertiary);
+}
+
+.agent-details--compact[open] {
+  padding-top: var(--space-2);
+}
+
+.agent-details--compact label {
+  margin-top: var(--space-3);
+}
+
+.agent-fallback-command {
+  display: flex;
+  margin-top: var(--space-4);
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .settings-back {

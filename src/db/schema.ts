@@ -147,6 +147,25 @@ export const integrations = pgTable(
   ],
 );
 
+export const vpsAgentEnrollments = pgTable(
+  "vps_agent_enrollments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    codeDigest: text("code_digest").notNull(),
+    endpoint: text("endpoint").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("vps_agent_enrollments_code_unique").on(table.codeDigest),
+    index("vps_agent_enrollments_workspace_idx").on(table.workspaceId),
+  ],
+);
+
 export const checks = pgTable(
   "checks",
   {
