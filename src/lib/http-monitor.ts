@@ -8,9 +8,9 @@ import {
   applications,
   checks,
   incidents,
-  notifications,
   observations,
 } from "@/db/schema";
+import { createOrRefreshNotification, resolveNotification } from "@/lib/notifications";
 
 const MAX_REDIRECTS = 5;
 const MONITOR_USER_AGENT = "Luigi-Monitoring/0.1";
@@ -172,6 +172,8 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
 
   let incidentOpened = false;
   let incidentResolved = false;
+  let openedIncidentId: string | undefined;
+  let resolvedIncidentId: string | undefined;
   const observedAt = new Date();
 
   await db.transaction(async (transaction) => {
@@ -209,13 +211,7 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
         title: `${configuration.applicationName} ne répond plus`,
         startedAt: observedAt,
       }).returning({ id: incidents.id });
-      await transaction.insert(notifications).values({
-        workspaceId: configuration.workspaceId,
-        title: `${configuration.applicationName} est indisponible`,
-        body: `${configuration.failureThreshold} contrôles ont échoué consécutivement. Dernier résultat : ${detail}`,
-        severity: "critical",
-        targetUrl: `/#incident-${incident.id}`,
-      });
+      openedIncidentId = incident.id;
       incidentOpened = true;
     }
 
@@ -224,13 +220,7 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
         .update(incidents)
         .set({ status: "resolved", resolvedAt: observedAt, updatedAt: observedAt })
         .where(eq(incidents.id, openIncident.id));
-      await transaction.insert(notifications).values({
-        workspaceId: configuration.workspaceId,
-        title: `${configuration.applicationName} répond à nouveau`,
-        body: `${detail} en ${latencyMs} ms. L’incident a été résolu automatiquement.`,
-        severity: "low",
-        targetUrl: "/#applications",
-      });
+      resolvedIncidentId = openIncident.id;
       incidentResolved = true;
     }
 
@@ -244,6 +234,24 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
       .set({ status: applicationStatus, lastCheckedAt: observedAt, updatedAt: observedAt })
       .where(eq(applications.id, configuration.applicationId));
   });
+
+  if (openedIncidentId) {
+    await createOrRefreshNotification({
+      workspaceId: configuration.workspaceId,
+      title: `${configuration.applicationName} est indisponible`,
+      body: `${configuration.failureThreshold} contrôles ont échoué consécutivement. Dernier résultat : ${detail}`,
+      severity: "critical",
+      targetUrl: `/#application-${configuration.applicationId}`,
+      fingerprint: `availability:incident:${openedIncidentId}`,
+    });
+  }
+  if (resolvedIncidentId) {
+    await resolveNotification(configuration.workspaceId, `availability:incident:${resolvedIncidentId}`, {
+      title: `${configuration.applicationName} répond à nouveau`,
+      body: `${detail} en ${latencyMs} ms. L’incident a été résolu automatiquement.`,
+      targetUrl: `/#application-${configuration.applicationId}`,
+    });
+  }
 
   return {
     checkId: configuration.checkId,

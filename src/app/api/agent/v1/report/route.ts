@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { integrations, vpsMetricSamples } from "@/db/schema";
 import { hashAgentToken } from "@/lib/agent-auth";
+import { evaluateMonitoringSilences, recordMonitoringHeartbeat } from "@/lib/monitoring-heartbeats";
 import { vpsReportSchema } from "@/lib/vps-report";
 import { evaluateVpsReport } from "@/lib/vps-rules";
 
@@ -98,6 +99,12 @@ export async function POST(request: Request) {
     })
     .where(eq(integrations.id, integration.id));
   await evaluateVpsReport(integration.workspaceId, parsed.data, receivedAt);
+  const configuredInterval = integration.configuration.reportIntervalSeconds;
+  const reportIntervalSeconds = typeof configuredInterval === "number"
+    ? Math.max(60, Math.min(Math.round(configuredInterval), 86_400))
+    : 300;
+  await recordMonitoringHeartbeat(integration.workspaceId, "vps_agent", reportIntervalSeconds, receivedAt);
+  await evaluateMonitoringSilences(integration.workspaceId, receivedAt, "vps_agent");
 
   return NextResponse.json({ accepted: true, duplicate: false, receivedAt: receivedAt.toISOString() }, { status: 202 });
 }

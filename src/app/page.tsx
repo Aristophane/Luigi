@@ -1,5 +1,5 @@
 import { Dashboard } from "@/components/dashboard";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   applications as applicationsTable,
@@ -113,10 +113,17 @@ export default async function Home() {
     .from(notificationsTable)
     .where(and(
       eq(notificationsTable.workspaceId, workspaceId),
-      eq(notificationsTable.status, "unread"),
+      inArray(notificationsTable.status, ["unread", "read"]),
     ))
-    .orderBy(desc(notificationsTable.createdAt))
-    .limit(5);
+    .orderBy(desc(notificationsTable.lastOccurredAt))
+    .limit(20);
+  const [{ unreadNotificationCount }] = await db
+    .select({ unreadNotificationCount: count() })
+    .from(notificationsTable)
+    .where(and(
+      eq(notificationsTable.workspaceId, workspaceId),
+      eq(notificationsTable.status, "unread"),
+    ));
   const recentObservations = applicationIds.length > 0
     ? await db
       .select({
@@ -182,8 +189,10 @@ export default async function Home() {
     title: notification.title,
     body: notification.body,
     severity: notification.severity,
+    status: notification.status as "unread" | "read",
+    occurrenceCount: notification.occurrenceCount,
     targetUrl: notification.targetUrl ?? "/#overview",
-    createdLabel: notification.createdAt.toLocaleString("fr-FR"),
+    createdLabel: notification.lastOccurredAt.toLocaleString("fr-FR"),
   }));
   const activity: ActivityEvent[] = recentObservations.map((observation) => ({
     id: observation.id,
@@ -290,6 +299,7 @@ export default async function Home() {
       maintenanceTasks={maintenanceTasks}
       maintenanceHistory={maintenanceHistory}
       notifications={dashboardNotifications}
+      unreadNotificationCount={unreadNotificationCount}
       activity={activity}
       vps={vpsOverview}
       userName={session.user.name}

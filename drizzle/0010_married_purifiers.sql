@@ -1,0 +1,2 @@
+DROP INDEX "notifications_workspace_fingerprint_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "notifications_workspace_fingerprint_idx" ON "notifications" USING btree ("workspace_id","fingerprint") WHERE "notifications"."resolved_at" is null;

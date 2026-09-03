@@ -2,8 +2,10 @@
 
 import {
   Activity,
+  Archive,
   Bell,
   Check,
+  CheckCheck,
   ChevronRight,
   CloudCog,
   GitBranch,
@@ -28,9 +30,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   archiveApplication,
+  archiveNotification,
   completeMaintenanceTask,
   createApplication,
   createMaintenanceTask,
+  markAllNotificationsRead,
+  openNotification,
   runMonitoringNow,
   reopenMaintenanceTask,
   type CreateApplicationState,
@@ -44,7 +49,7 @@ import { ScanApplicationButton } from "@/components/scan-application-button";
 import type { ActivityEvent, DashboardNotification, GitHubRepositoryOption, MaintenanceTask, MonitoredApplication, VpsOverview } from "@/lib/domain";
 
 type Theme = "light" | "dark";
-type PushState = "idle" | "enabled" | "denied" | "unsupported";
+type PushState = "idle" | "loading" | "enabled" | "denied" | "unsupported" | "not_configured" | "error";
 type RepositoryLoadState = "idle" | "loading" | "success" | "error";
 
 const navigation = [
@@ -65,23 +70,32 @@ const severityLabels = {
 const initialApplicationState: CreateApplicationState = { status: "idle", message: "" };
 const initialTaskState: CreateTaskState = { status: "idle", message: "" };
 
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = window.atob(base64);
+  return Uint8Array.from(bytes, (character) => character.charCodeAt(0));
+}
+
 type DashboardProps = {
   applications: MonitoredApplication[];
   maintenanceTasks: MaintenanceTask[];
   maintenanceHistory: MaintenanceTask[];
   notifications: DashboardNotification[];
+  unreadNotificationCount: number;
   activity: ActivityEvent[];
   vps: VpsOverview;
   userName: string;
   githubIntegrationLabel?: string;
 };
 
-export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, activity, vps, userName, githubIntegrationLabel }: DashboardProps) {
+export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, unreadNotificationCount, activity, vps, userName, githubIntegrationLabel }: DashboardProps) {
   const router = useRouter();
   const [theme, setTheme] = useState<Theme>("light");
   const [lastRefresh, setLastRefresh] = useState("il y a 38 secondes");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pushState, setPushState] = useState<PushState>("idle");
+  const [pushMessage, setPushMessage] = useState("");
   const [githubRepositories, setGitHubRepositories] = useState<GitHubRepositoryOption[]>([]);
   const [repositoryLoadState, setRepositoryLoadState] = useState<RepositoryLoadState>("idle");
   const [repositoryLoadMessage, setRepositoryLoadMessage] = useState("");
@@ -110,10 +124,30 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
 
       if (!("Notification" in window) || !("serviceWorker" in navigator)) {
         setPushState("unsupported");
-      } else if (Notification.permission === "granted") {
-        setPushState("enabled");
       } else if (Notification.permission === "denied") {
         setPushState("denied");
+      } else if (Notification.permission === "granted") {
+        void navigator.serviceWorker.ready
+          .then((registration) => registration.pushManager.getSubscription())
+          .then(async (subscription) => {
+            if (!subscription) {
+              setPushState("idle");
+              return;
+            }
+            const configurationResponse = await fetch("/api/push/subscriptions", { cache: "no-store" });
+            const configuration = await configurationResponse.json() as { configured?: boolean };
+            if (!configurationResponse.ok || !configuration.configured) {
+              setPushState("not_configured");
+              return;
+            }
+            const response = await fetch("/api/push/subscriptions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(subscription.toJSON()),
+            });
+            setPushState(response.ok ? "enabled" : "error");
+          })
+          .catch(() => setPushState("error"));
       }
     });
 
@@ -226,20 +260,85 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
       return;
     }
 
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") {
-      setPushState("denied");
-      return;
-    }
+    setPushState("loading");
+    setPushMessage("");
 
-    const registration = await navigator.serviceWorker.ready;
-    await registration.showNotification("Luigi veille", {
-      body: "Les notifications de supervision sont actives sur ce navigateur.",
-      icon: "/icon.svg",
-      tag: "luigi-push-test",
-      data: { url: "/#overview" },
-    });
-    setPushState("enabled");
+    try {
+      const configurationResponse = await fetch("/api/push/subscriptions", { cache: "no-store" });
+      const configuration = await configurationResponse.json() as { configured?: boolean; publicKey?: string | null };
+      if (!configurationResponse.ok || !configuration.configured || !configuration.publicKey) {
+        setPushState("not_configured");
+        setPushMessage("Ajoute les clés VAPID dans l’environnement de production.");
+        return;
+      }
+
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushState("denied");
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      const existing = await registration.pushManager.getSubscription();
+      const subscription = existing ?? await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(configuration.publicKey),
+      });
+      const body = subscription.toJSON();
+      const subscriptionResponse = await fetch("/api/push/subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!subscriptionResponse.ok) throw new Error("subscription_failed");
+
+      setPushState("enabled");
+      setPushMessage("Ce navigateur est relié. Une notification de test a été envoyée.");
+      await sendTestNotification(subscription.endpoint);
+    } catch {
+      setPushState("error");
+      setPushMessage("La connexion des notifications a échoué. Réessaie dans un instant.");
+    }
+  }
+
+  async function sendTestNotification(knownEndpoint?: string) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = knownEndpoint ? null : await registration.pushManager.getSubscription();
+      const endpoint = knownEndpoint ?? subscription?.endpoint;
+      if (!endpoint) throw new Error("missing_subscription");
+      const response = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint }),
+      });
+      if (!response.ok) throw new Error("test_failed");
+      setPushMessage("Notification de test envoyée.");
+    } catch {
+      setPushMessage("Le test n’a pas pu être envoyé.");
+    }
+  }
+
+  async function disableNotifications() {
+    setPushState("loading");
+    setPushMessage("");
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        await fetch("/api/push/subscriptions", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: subscription.endpoint }),
+        });
+        await subscription.unsubscribe();
+      }
+      setPushState("idle");
+      setPushMessage("Notifications désactivées sur ce navigateur.");
+    } catch {
+      setPushState("error");
+      setPushMessage("La désactivation n’a pas pu aboutir.");
+    }
   }
 
   return (
@@ -300,18 +399,35 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
               <details className="notifications-menu">
                 <summary className="icon-button" aria-label="Ouvrir les notifications">
                   <Bell aria-hidden="true" />
-                  {notifications.length > 0 && <span className="notification-count" aria-label={`${notifications.length} notifications non lues`}>{notifications.length}</span>}
+                  {unreadNotificationCount > 0 && <span className="notification-count" aria-label={`${unreadNotificationCount} notifications non lues`}>{unreadNotificationCount}</span>}
                 </summary>
                 <div className="notifications-panel">
                   <div className="notifications-panel__heading">
-                    <strong>Notifications</strong>
-                    <span>{notifications.length} nouvelle{notifications.length > 1 ? "s" : ""}</span>
+                    <span><strong>Notifications</strong><small>{unreadNotificationCount} non lue{unreadNotificationCount > 1 ? "s" : ""}</small></span>
+                    {unreadNotificationCount > 0 && (
+                      <form action={markAllNotificationsRead}>
+                        <button type="submit"><CheckCheck aria-hidden="true" /> Tout marquer lu</button>
+                      </form>
+                    )}
                   </div>
                   {notifications.map((notification) => (
-                    <a href={notification.targetUrl} key={notification.id}>
-                      <span className={`notification-mark notification-mark--${notification.severity}`} aria-hidden="true" />
-                      <span><strong>{notification.title}</strong><small>{notification.body}</small></span>
-                    </a>
+                    <div className={`notification-item notification-item--${notification.status}`} key={notification.id}>
+                      <form action={openNotification.bind(null, notification.id)}>
+                        <button className="notification-link" type="submit">
+                          <span className={`notification-mark notification-mark--${notification.severity}`} aria-hidden="true" />
+                          <span>
+                            <strong>{notification.title}</strong>
+                            <small>{notification.body}</small>
+                            <time>{notification.createdLabel}{notification.occurrenceCount > 1 ? ` · ${notification.occurrenceCount} occurrences` : ""}</time>
+                          </span>
+                        </button>
+                      </form>
+                      <form action={archiveNotification.bind(null, notification.id)}>
+                        <button className="notification-archive" type="submit" aria-label={`Archiver ${notification.title}`} title="Archiver">
+                          <Archive aria-hidden="true" />
+                        </button>
+                      </form>
+                    </div>
                   ))}
                   {notifications.length === 0 && <p className="notifications-panel__empty">Aucune nouvelle notification.</p>}
                 </div>
@@ -349,7 +465,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
 
               <div className="application-list">
                 {applications.map((application) => (
-                  <article className="application-row" key={application.id}>
+                  <article className="application-row" id={`application-${application.id}`} key={application.id}>
                     <div className="application-row__identity">
                       <StatusDot status={application.status} compact />
                       <div>
@@ -472,7 +588,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
 
               <div className="task-list" aria-live="polite">
                 {visibleTasks.length > 0 ? visibleTasks.map((task) => (
-                  <article className="task-row" key={task.id}>
+                  <article className="task-row" id={`maintenance-task-${task.id}`} key={task.id}>
                     <form action={completeMaintenanceTask.bind(null, task.id)}>
                       <button className="task-check" type="submit" aria-label={`Marquer « ${task.title} » comme terminée`}>
                         <Check aria-hidden="true" />
@@ -551,11 +667,26 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
               <div>
                 <p className="eyebrow">Ce navigateur</p>
                 <h2 id="notification-title">{pushState === "enabled" ? "Notifications activées" : "Rester informé sans garder Luigi ouvert"}</h2>
-                <p>{pushState === "enabled" ? "Ce navigateur recevra les incidents critiques et les alertes importantes." : "Active les notifications Web Push. Luigi enverra d’abord un message de test."}</p>
+                <p aria-live="polite">{pushMessage || (pushState === "enabled"
+                  ? "Ce navigateur recevra les incidents critiques, les silences et les retours à la normale."
+                  : pushState === "denied"
+                    ? "Les notifications sont bloquées dans les réglages de ce navigateur."
+                    : pushState === "not_configured"
+                      ? "Les clés VAPID doivent être configurées avant d’activer ce canal."
+                      : "Active les notifications Web Push. Luigi enverra d’abord un message de test.")}</p>
               </div>
-              <button className="button button--secondary" type="button" onClick={enableNotifications} disabled={pushState === "enabled" || pushState === "unsupported"}>
-                {pushState === "enabled" ? <><Check aria-hidden="true" /> Activées</> : pushState === "denied" ? "Autorisation refusée" : pushState === "unsupported" ? "Non disponible" : "Activer sur ce navigateur"}
-              </button>
+              <div className="notification-setup__actions">
+                {pushState === "enabled" ? <>
+                  <button className="button button--secondary" type="button" onClick={() => void sendTestNotification()}>
+                    <Bell aria-hidden="true" /> Tester
+                  </button>
+                  <button className="button button--quiet" type="button" onClick={disableNotifications}>Désactiver</button>
+                </> : (
+                  <button className="button button--secondary" type="button" onClick={enableNotifications} disabled={pushState === "loading" || pushState === "denied" || pushState === "unsupported"}>
+                    {pushState === "loading" ? <><RefreshCw className="spin" aria-hidden="true" /> Connexion…</> : pushState === "denied" ? "Autorisation refusée" : pushState === "unsupported" ? "Non disponible" : "Activer sur ce navigateur"}
+                  </button>
+                )}
+              </div>
             </section>
             <section className="notification-setup" aria-labelledby="github-title">
               <div className="notification-setup__icon"><GitBranch aria-hidden="true" /></div>

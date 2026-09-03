@@ -82,6 +82,8 @@ export interface DashboardNotification {
   title: string;
   body: string;
   severity: "critical" | "high" | "medium" | "low";
+  status: "unread" | "read";
+  occurrenceCount: number;
   targetUrl: string;
   createdLabel: string;
 }

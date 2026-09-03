@@ -40,6 +40,22 @@ Authorization: Bearer <MONITOR_CRON_SECRET>
 
 L’endpoint n’exécute que les contrôles arrivés à échéance. Une application passe en vigilance au premier échec ; un incident critique et une notification interne sont créés après trois échecs consécutifs. Le premier succès suivant résout automatiquement l’incident. Les redirections sont contrôlées et les adresses locales ou privées sont refusées afin de limiter les risques SSRF.
 
+## Notifications Web Push
+
+Génère une paire VAPID unique, puis conserve les deux valeurs dans les variables d’environnement de Luigi :
+
+```bash
+npx web-push generate-vapid-keys --json
+```
+
+- `NEXT_PUBLIC_VAPID_PUBLIC_KEY` : clé publique transmise aux navigateurs ;
+- `VAPID_PRIVATE_KEY` : clé privée, exclusivement côté serveur ;
+- `VAPID_SUBJECT` : contact du service, par exemple `mailto:admin@example.com`.
+
+Chaque navigateur est enregistré séparément et peut être testé ou révoqué depuis le cockpit. Les souscriptions expirées sont nettoyées automatiquement. Les incidents critiques, alertes élevées, silences de collecte et retours à la normale peuvent alors être reçus lorsque Luigi n’est pas ouvert.
+
+`MONITOR_CRON_INTERVAL_SECONDS` doit correspondre à la fréquence réelle d’appel du cron. Luigi compare ce rythme à celui de l’agent VPS pour détecter qu’une source est devenue silencieuse sans générer de doublons.
+
 ## Documentation
 
 - [Spécification du module de monitoring](docs/monitoring.md)
@@ -56,4 +72,6 @@ Pour un jeton GitHub V1, accorde uniquement l’accès aux dépôts nécessaires
 
 L’agent Ubuntu 24.04 et Debian peut maintenant être enrôlé depuis `/settings/vps`. Il remonte les métriques de capacité, mises à jour APT, redémarrage requis, état UFW, configuration SSH, services choisis et fraîcheur de sauvegarde. Les constats correspondants créent et résolvent automatiquement les tâches de maintenance sans doublons.
 
-Les prochains incréments ajouteront la souscription Web Push persistante et le centre de notifications interactif, puis renforceront la gestion opérationnelle : rattachement des maintenances aux applications, historique et réouverture des tâches clôturées, suppression logique d'une application avec conservation de son historique, et affichage explicite de la fraîcheur des données VPS.
+La gestion opérationnelle relie maintenant les maintenances aux applications, conserve leur historique, permet leur réouverture et archive une application sans effacer ses traces. Le cockpit affiche également la fraîcheur et la cadence des rapports VPS.
+
+Le Web Push persistant et le centre de notifications interactif sont branchés. Les alertes critiques ou élevées, les sources silencieuses et les récupérations sont dédupliquées puis distribuées aux navigateurs abonnés. Le prochain incrément prioritaire porte sur les scans planifiés de dépendances et l’agrégation des vulnérabilités OSV ou Dependabot.

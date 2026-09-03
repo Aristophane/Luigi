@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
@@ -11,6 +12,7 @@ import {
   findings,
   maintenanceTaskEvents,
   maintenanceTasks,
+  notifications,
   technologies,
 } from "@/db/schema";
 import { requireWorkspace } from "@/lib/dal";
@@ -38,6 +40,56 @@ export async function runMonitoringNow() {
     warning: results.filter((result) => result.status === "warning").length,
     critical: results.filter((result) => result.status === "critical").length,
   };
+}
+
+export async function markNotificationRead(notificationId: string) {
+  const parsedId = z.string().uuid().safeParse(notificationId);
+  if (!parsedId.success) return;
+  const { workspaceId } = await requireWorkspace();
+  await db
+    .update(notifications)
+    .set({ status: "read", updatedAt: new Date() })
+    .where(and(eq(notifications.id, parsedId.data), eq(notifications.workspaceId, workspaceId)));
+  revalidatePath("/");
+}
+
+export async function openNotification(notificationId: string) {
+  const parsedId = z.string().uuid().safeParse(notificationId);
+  if (!parsedId.success) return;
+  const { workspaceId } = await requireWorkspace();
+  const [notification] = await db
+    .select({ targetUrl: notifications.targetUrl })
+    .from(notifications)
+    .where(and(eq(notifications.id, parsedId.data), eq(notifications.workspaceId, workspaceId)))
+    .limit(1);
+  if (!notification) return;
+
+  await db
+    .update(notifications)
+    .set({ status: "read", updatedAt: new Date() })
+    .where(eq(notifications.id, parsedId.data));
+  const targetUrl = notification.targetUrl?.startsWith("/") ? notification.targetUrl : "/#overview";
+  redirect(targetUrl);
+}
+
+export async function archiveNotification(notificationId: string) {
+  const parsedId = z.string().uuid().safeParse(notificationId);
+  if (!parsedId.success) return;
+  const { workspaceId } = await requireWorkspace();
+  await db
+    .update(notifications)
+    .set({ status: "archived", updatedAt: new Date() })
+    .where(and(eq(notifications.id, parsedId.data), eq(notifications.workspaceId, workspaceId)));
+  revalidatePath("/");
+}
+
+export async function markAllNotificationsRead() {
+  const { workspaceId } = await requireWorkspace();
+  await db
+    .update(notifications)
+    .set({ status: "read", updatedAt: new Date() })
+    .where(and(eq(notifications.workspaceId, workspaceId), eq(notifications.status, "unread")));
+  revalidatePath("/");
 }
 
 const applicationSchema = z.object({

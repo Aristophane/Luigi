@@ -2,7 +2,8 @@ import "server-only";
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { findings, maintenanceTaskEvents, maintenanceTasks, notifications, vpsMetricSamples } from "@/db/schema";
+import { findings, maintenanceTaskEvents, maintenanceTasks, vpsMetricSamples } from "@/db/schema";
+import { createOrRefreshNotification, resolveNotification } from "@/lib/notifications";
 import type { VpsReport } from "@/lib/vps-report";
 
 type Rule = {
@@ -56,6 +57,11 @@ async function applyRule(workspaceId: string, rule: Rule, observedAt: Date) {
         })));
       }
     });
+    await resolveNotification(workspaceId, `finding:${rule.fingerprint}`, {
+      title: `${rule.findingTitle} · résolu`,
+      body: "Le dernier rapport confirme un retour à la normale.",
+      targetUrl: "/#vps",
+    });
     return;
   }
 
@@ -93,6 +99,7 @@ async function applyRule(workspaceId: string, rule: Rule, observedAt: Date) {
       inArray(maintenanceTasks.status, ["open", "planned", "in_progress"]),
     ))
     .limit(1);
+  let taskId = activeTask?.id;
   if (!activeTask) {
     const dueAt = new Date(observedAt);
     dueAt.setDate(dueAt.getDate() + rule.dueInDays);
@@ -115,16 +122,18 @@ async function applyRule(workspaceId: string, rule: Rule, observedAt: Date) {
         note: "Tâche créée automatiquement à partir d’un rapport VPS.",
         createdAt: observedAt,
       });
+      taskId = task.id;
     });
   }
 
   if (isNewOccurrence && (rule.severity === "critical" || rule.severity === "high")) {
-    await db.insert(notifications).values({
+    await createOrRefreshNotification({
       workspaceId,
       title: rule.findingTitle,
       body: rule.description,
       severity: rule.severity,
-      targetUrl: "/#vps",
+      targetUrl: taskId ? `/#maintenance-task-${taskId}` : "/#vps",
+      fingerprint: `finding:${rule.fingerprint}`,
     });
   }
 }

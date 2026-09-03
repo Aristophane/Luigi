@@ -1,7 +1,12 @@
 self.addEventListener("push", (event) => {
   if (!event.data) return;
 
-  const data = event.data.json();
+  let data;
+  try {
+    data = event.data.json();
+  } catch {
+    data = { title: "Luigi", body: event.data.text(), url: "/" };
+  }
   const options = {
     body: data.body,
     icon: data.icon || "/icon.svg",
@@ -22,8 +27,8 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
-      const existingWindow = windows.find((windowClient) => windowClient.url === targetUrl);
-      if (existingWindow) return existingWindow.focus();
+      const existingWindow = windows.find((windowClient) => new URL(windowClient.url).origin === self.location.origin);
+      if (existingWindow) return existingWindow.navigate(targetUrl).then(() => existingWindow.focus());
       return clients.openWindow(targetUrl);
     }),
   );

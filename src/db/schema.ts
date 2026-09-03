@@ -308,9 +308,18 @@ export const notifications = pgTable(
     status: notificationStatus("status").default("unread").notNull(),
     severity: taskSeverity("severity").default("medium").notNull(),
     targetUrl: text("target_url"),
+    fingerprint: text("fingerprint"),
+    occurrenceCount: integer("occurrence_count").default(1).notNull(),
+    lastOccurredAt: timestamp("last_occurred_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     ...timestamps,
   },
-  (table) => [index("notifications_workspace_idx").on(table.workspaceId)],
+  (table) => [
+    index("notifications_workspace_idx").on(table.workspaceId),
+    uniqueIndex("notifications_workspace_fingerprint_idx")
+      .on(table.workspaceId, table.fingerprint)
+      .where(sql`${table.resolvedAt} is null`),
+  ],
 );
 
 export const pushSubscriptions = pgTable(
@@ -327,6 +336,24 @@ export const pushSubscriptions = pgTable(
     ...timestamps,
   },
   (table) => [uniqueIndex("push_subscriptions_endpoint_unique").on(table.endpoint)],
+);
+
+export const monitoringHeartbeats = pgTable(
+  "monitoring_heartbeats",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    intervalSeconds: integer("interval_seconds").notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("monitoring_heartbeats_workspace_source_unique").on(table.workspaceId, table.source),
+    index("monitoring_heartbeats_workspace_idx").on(table.workspaceId),
+  ],
 );
 
 export const vpsMetricSamples = pgTable(
