@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { user } from "@/db/auth-schema";
 
 export * from "@/db/auth-schema";
@@ -76,10 +77,13 @@ export const applications = pgTable(
     status: healthStatus("status").default("unknown").notNull(),
     lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
     lastRepositoryScannedAt: timestamp("last_repository_scanned_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("applications_workspace_url_unique").on(table.workspaceId, table.publicUrl),
+    uniqueIndex("applications_workspace_url_unique")
+      .on(table.workspaceId, table.publicUrl)
+      .where(sql`${table.archivedAt} is null`),
     index("applications_workspace_idx").on(table.workspaceId),
   ],
 );
@@ -251,6 +255,7 @@ export const maintenanceTasks = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
+    applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
     findingId: uuid("finding_id").references(() => findings.id, { onDelete: "set null" }),
     title: text("title").notNull(),
     description: text("description"),
@@ -262,7 +267,33 @@ export const maintenanceTasks = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true }),
     ...timestamps,
   },
-  (table) => [index("maintenance_tasks_workspace_idx").on(table.workspaceId)],
+  (table) => [
+    index("maintenance_tasks_workspace_idx").on(table.workspaceId),
+    index("maintenance_tasks_application_idx").on(table.applicationId),
+  ],
+);
+
+export const maintenanceTaskEvents = pgTable(
+  "maintenance_task_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => maintenanceTasks.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").references(() => user.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    previousStatus: taskStatus("previous_status"),
+    nextStatus: taskStatus("next_status"),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("maintenance_task_events_workspace_idx").on(table.workspaceId),
+    index("maintenance_task_events_task_time_idx").on(table.taskId, table.createdAt),
+  ],
 );
 
 export const notifications = pgTable(

@@ -45,6 +45,10 @@ export interface VpsOverview {
   status: HealthStatus;
   hostname?: string;
   lastSeenLabel: string;
+  refreshIntervalLabel: string;
+  dataAgeLabel: string;
+  nextReportLabel: string;
+  freshnessStatus: "fresh" | "late" | "silent" | "unknown";
   metrics: ServerMetric[];
   availableUpdates: number;
   securityUpdates: number;
@@ -60,7 +64,9 @@ export interface MaintenanceTask {
   severity: "critical" | "high" | "medium" | "low";
   dueLabel: string;
   source: string;
-  status: "open" | "planned" | "in_progress";
+  applicationName: string;
+  status: "open" | "planned" | "in_progress" | "done" | "dismissed";
+  completedLabel?: string;
 }
 
 export interface ActivityEvent {

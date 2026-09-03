@@ -54,6 +54,6 @@ L’intégration GitHub peut vérifier un jeton finement paramétré, le chiffre
 
 Pour un jeton GitHub V1, accorde uniquement l’accès aux dépôts nécessaires avec la permission **Contents: Read-only**. Une GitHub App dédiée remplacera avantageusement ce mécanisme lors de la mise en production.
 
-L’agent Ubuntu 24.04 peut maintenant être enrôlé depuis `/settings/vps`. Il remonte les métriques de capacité, mises à jour APT, redémarrage requis, état UFW, configuration SSH, services choisis et fraîcheur de sauvegarde. Les constats correspondants créent et résolvent automatiquement les tâches de maintenance sans doublons.
+L’agent Ubuntu 24.04 et Debian peut maintenant être enrôlé depuis `/settings/vps`. Il remonte les métriques de capacité, mises à jour APT, redémarrage requis, état UFW, configuration SSH, services choisis et fraîcheur de sauvegarde. Les constats correspondants créent et résolvent automatiquement les tâches de maintenance sans doublons.
 
-Le prochain incrément ajoutera la souscription Web Push persistante et le centre de notifications interactif.
+Les prochains incréments ajouteront la souscription Web Push persistante et le centre de notifications interactif, puis renforceront la gestion opérationnelle : rattachement des maintenances aux applications, historique et réouverture des tâches clôturées, suppression logique d'une application avec conservation de son historique, et affichage explicite de la fraîcheur des données VPS.

@@ -50,6 +50,20 @@
       "when": 1788446594866,
       "tag": "0006_aspiring_morlun",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788450016234,
+      "tag": "0007_careless_demogoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788457814582,
+      "tag": "0008_foamy_krista_starr",
+      "breakpoints": true
     }
   ]
 }

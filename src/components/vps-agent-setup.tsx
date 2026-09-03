@@ -15,6 +15,7 @@ type VpsAgentSetupProps = {
   lastSyncedLabel?: string;
   enrolledAt?: string;
   systemLabel?: string;
+  reportIntervalLabel: string;
   endpoint: string;
 };
 
@@ -28,6 +29,7 @@ export function VpsAgentSetup({
   lastSyncedLabel,
   enrolledAt,
   systemLabel,
+  reportIntervalLabel,
   endpoint,
 }: VpsAgentSetupProps) {
   const router = useRouter();
@@ -98,7 +100,7 @@ export function VpsAgentSetup({
           <h2 id="agent-setup-title">{label ?? "Connecter un VPS"}</h2>
           <p>
             {lastSyncedLabel
-              ? `${systemLabel ? `${systemLabel} · ` : ""}Dernier rapport ${lastSyncedLabel}`
+              ? `${systemLabel ? `${systemLabel} · ` : ""}Dernier rapport ${lastSyncedLabel} · collecte toutes les ${reportIntervalLabel}`
               : configured
                 ? "L’agent est authentifié. Luigi attend son premier rapport."
                 : "Une commande, puis Luigi détecte automatiquement Ubuntu ou Debian."}

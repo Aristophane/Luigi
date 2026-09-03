@@ -355,6 +355,11 @@ h3 {
   color: var(--critical);
 }
 
+.row-action--danger:hover {
+  background: var(--critical-soft);
+  color: var(--critical);
+}
+
 .icon-button svg,
 .row-action svg,
 .task-check svg {
@@ -382,6 +387,12 @@ h3 {
 .button svg {
   width: 1rem;
   height: 1rem;
+}
+
+.button--compact {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.74rem;
 }
 
 .button:hover:not(:disabled) {
@@ -854,6 +865,12 @@ h3 {
   font-size: 0.84rem;
 }
 
+.application-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .metric-warning {
   color: var(--warning);
 }
@@ -934,6 +951,49 @@ h3 {
   margin-top: var(--space-8);
   padding-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
+}
+
+.vps-freshness {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+  padding: var(--space-4) 0;
+  border-block: 1px solid var(--border-subtle);
+}
+
+.vps-freshness + .vps-facts {
+  margin-top: 0;
+  border-top: 0;
+}
+
+.vps-freshness span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.vps-freshness strong {
+  color: var(--text-tertiary);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.vps-freshness small {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vps-freshness--late small,
+.vps-freshness--silent small {
+  color: var(--warning);
 }
 
 .vps-facts span {
@@ -1023,6 +1083,93 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.task-row__content > p strong {
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.maintenance-history {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.maintenance-history > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 3.25rem;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.maintenance-history > summary::-webkit-details-marker {
+  display: none;
+}
+
+.maintenance-history > summary svg {
+  width: 0.95rem;
+}
+
+.maintenance-history > summary span {
+  display: inline-grid;
+  min-width: 1.4rem;
+  min-height: 1.4rem;
+  place-items: center;
+  margin-left: auto;
+  border-radius: 99rem;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font-size: 0.65rem;
+}
+
+.maintenance-history__list {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--space-2);
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 3.75rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.history-row > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.history-row strong,
+.history-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-row strong {
+  font-size: 0.76rem;
+}
+
+.history-row small,
+.maintenance-history__empty {
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
+
+.maintenance-history__empty {
+  margin: 0;
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .severity--critical,
@@ -1220,6 +1367,12 @@ h3 {
   gap: var(--space-2);
   font-size: 0.8rem;
   font-weight: 700;
+}
+
+.field-hint {
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 500;
 }
 
 .app-form input,
@@ -2465,6 +2618,31 @@ h3 {
 
   .application-row__metric {
     text-align: right;
+  }
+
+  .application-row__actions {
+    gap: 0;
+  }
+
+  .vps-freshness {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
+
+  .vps-freshness span {
+    flex-direction: row;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .history-row {
+    align-items: start;
+    grid-template-columns: 1fr;
+    padding-block: var(--space-3);
+  }
+
+  .history-row .button {
+    width: 100%;
   }
 
   .notification-setup {

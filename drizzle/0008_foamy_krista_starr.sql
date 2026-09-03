@@ -1,0 +1,2 @@
+DROP INDEX "applications_workspace_url_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "applications_workspace_url_unique" ON "applications" USING btree ("workspace_id","public_url") WHERE "applications"."archived_at" is null;

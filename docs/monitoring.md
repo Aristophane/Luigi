@@ -9,11 +9,12 @@ Le produit n'a pas vocation à remplacer les outils spécialisés. Il constitue 
 ## Décisions actées
 
 - les dépôts applicatifs sont hébergés sur GitHub ;
-- le serveur cible utilise Ubuntu Server 24.04 LTS ;
+- le serveur cible utilise Ubuntu Server 24.04 LTS ou Debian ;
 - les intégrations du premier incrément sont en lecture seule ;
 - le monitoring de disponibilité est exécuté hors du VPS surveillé ;
 - les correctifs sûrs peuvent être automatisés, mais les changements risqués créent une tâche à valider ;
 - chaque résultat indique sa source et la date de sa dernière collecte ;
+- la vue VPS affiche la fréquence de collecte configurée, la date du dernier rapport, la prochaine collecte attendue et signale clairement une donnée périmée ;
 - la V1 est destinée à un seul utilisateur administrateur ;
 - la V1 utilise des notifications dans l'application et des notifications Web Push ;
 - les notifications par email sont reportées à la mise en production réelle ;
@@ -263,6 +264,30 @@ Le notifier est conçu derrière une interface de fournisseur. L'ajout ultérieu
 - responsables et runbooks ;
 - disponibilité sur une période choisie.
 
+### Fraîcheur des données VPS
+
+La vue VPS rend explicite le rythme de remontée des données. Elle affiche au minimum :
+
+- la fréquence de collecte configurée, par exemple « toutes les 5 minutes » ;
+- la date et l'heure du dernier rapport reçu ;
+- l'heure estimée de la prochaine collecte ;
+- l'âge actuel de la donnée ;
+- un état `à jour`, `en retard` ou `silencieux`, déterminé par rapport à la fréquence attendue.
+
+L'interface ne doit jamais présenter une ancienne mesure comme l'état actuel du serveur. Deux intervalles manqués créent un constat « source silencieuse » et peuvent déclencher une notification.
+
+## Cycle de vie d'une application
+
+Une application peut être retirée depuis son écran de configuration. La suppression est protégée par une confirmation explicite et suit par défaut une stratégie d'archivage logique :
+
+- les contrôles et collectes de l'application sont immédiatement désactivés ;
+- l'application disparaît des vues actives, mais reste consultable dans les éléments archivés ;
+- ses observations, incidents, notifications et opérations de maintenance sont conservés pour l'audit ;
+- les tâches encore ouvertes sont annulées ou archivées avec le motif « application supprimée » ;
+- une suppression définitive des données, si elle est ajoutée ultérieurement, constitue une action séparée et fortement confirmée.
+
+Cette stratégie permet de supprimer une application du périmètre surveillé sans effacer l'historique expliquant les interventions passées.
+
 ## Supervision et maintenance du VPS Ubuntu 24.04
 
 ### Collecte système
@@ -330,7 +355,8 @@ Le tableau de bord distingue clairement : « détecté », « correctif proposé
 |---|---|
 | Titre | action attendue formulée explicitement |
 | Origine | automatique, récurrente ou manuelle |
-| Projet et ressource | périmètre concerné |
+| Application | application concernée, obligatoire pour toute maintenance applicative |
+| Projet et ressource | périmètre concerné ; une tâche d'infrastructure référence le VPS et, si nécessaire, les applications potentiellement impactées |
 | Catégorie | disponibilité, capacité, sécurité, dépendance, sauvegarde, déploiement ou cycle de vie |
 | Gravité | critique, élevée, moyenne ou faible |
 | Statut | ouverte, planifiée, en cours, bloquée, terminée ou ignorée |
@@ -339,6 +365,18 @@ Le tableau de bord distingue clairement : « détecté », « correctif proposé
 | Preuves | observations, liens GitHub, journaux filtrés et source |
 | Runbook | procédure proposée et critères de validation |
 | Clé de regroupement | empêche la création répétée de la même tâche |
+
+Une tâche créée depuis la vue d'une application reprend automatiquement son identifiant. Lors d'une création globale, l'utilisateur choisit l'application concernée. Une tâche purement liée au VPS peut ne pas avoir d'application principale, mais peut référencer la liste des applications impactées.
+
+### Historique des opérations de maintenance
+
+La clôture d'une tâche ne la fait jamais disparaître définitivement. Chaque changement est ajouté à un journal immuable comprenant au minimum l'ancienne valeur, la nouvelle valeur, la date, l'auteur et un commentaire facultatif.
+
+- les tâches terminées et ignorées restent accessibles dans une vue d'historique filtrable par application, VPS, catégorie, statut et période ;
+- une tâche marquée terminée par erreur peut être rouverte, sans supprimer la trace de la validation ni celle de la réouverture ;
+- la clôture propose une note de résultat et, si pertinent, une preuve ou un lien vers le déploiement ;
+- les opérations automatiques enregistrent leur source et leur résultat de la même manière que les opérations manuelles ;
+- les tableaux de bord masquent éventuellement les tâches terminées par défaut, mais offrent toujours un accès clair à l'historique.
 
 ### Exemples de règles initiales
 
@@ -371,9 +409,16 @@ Une règle génère une clé stable, par exemple `project:resource:category:fing
 
 - moteur de règles et déduplication ;
 - incidents, acquittement et récupération ;
-- tâches automatiques, récurrentes et manuelles ;
-- responsables, échéances, runbooks et journal d'audit ;
+- tâches automatiques, récurrentes et manuelles, reliées à l'application concernée ;
+- responsables, échéances, runbooks, historique des changements et réouverture d'une tâche clôturée par erreur ;
 - centre de notifications interne, temps réel dans l'application et Web Push.
+
+### Incrément 2.1 — gestion et lisibilité opérationnelles
+
+- suppression logique d'une application avec arrêt de ses contrôles et conservation de son historique ;
+- accès aux applications archivées ;
+- affichage dans la vue VPS de la fréquence de collecte, du dernier rapport, de la prochaine collecte attendue et de l'état de fraîcheur ;
+- filtres d'historique des maintenances par application, ressource, statut et période.
 
 ### Incrément 3 — sécurité et chaîne de mise à jour
 
@@ -408,6 +453,10 @@ Une règle génère une clé stable, par exemple `project:resource:category:fing
 - l'utilisateur peut tester, désactiver et révoquer chaque souscription navigateur ;
 - une technologie détectée affiche sa preuve et peut être confirmée, corrigée ou ignorée ;
 - une nouvelle analyse de dépôt ne remplace jamais silencieusement une technologie déclarée manuellement.
+- toute tâche de maintenance applicative est reliée à l'application concernée ;
+- une tâche terminée reste consultable et peut être rouverte sans perdre son historique ;
+- la suppression d'une application arrête ses contrôles sans effacer ses incidents ni ses opérations passées ;
+- la vue VPS affiche la fréquence attendue, l'âge du dernier rapport et un avertissement lorsque la donnée est périmée.
 
 ## Questions propres à chaque projet
 

@@ -8,26 +8,31 @@ import {
   CloudCog,
   GitBranch,
   HardDrive,
+  History,
   LayoutDashboard,
   ListTodo,
   LogOut,
   Moon,
   Plus,
   RefreshCw,
+  RotateCcw,
   Server,
   Settings,
   ShieldCheck,
   Sun,
   TrainFront,
+  Trash2,
 } from "lucide-react";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
+  archiveApplication,
   completeMaintenanceTask,
   createApplication,
   createMaintenanceTask,
   runMonitoringNow,
+  reopenMaintenanceTask,
   type CreateApplicationState,
   type CreateTaskState,
 } from "@/app/actions";
@@ -63,6 +68,7 @@ const initialTaskState: CreateTaskState = { status: "idle", message: "" };
 type DashboardProps = {
   applications: MonitoredApplication[];
   maintenanceTasks: MaintenanceTask[];
+  maintenanceHistory: MaintenanceTask[];
   notifications: DashboardNotification[];
   activity: ActivityEvent[];
   vps: VpsOverview;
@@ -70,7 +76,7 @@ type DashboardProps = {
   githubIntegrationLabel?: string;
 };
 
-export function Dashboard({ applications, maintenanceTasks, notifications, activity, vps, userName, githubIntegrationLabel }: DashboardProps) {
+export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, activity, vps, userName, githubIntegrationLabel }: DashboardProps) {
   const router = useRouter();
   const [theme, setTheme] = useState<Theme>("light");
   const [lastRefresh, setLastRefresh] = useState("il y a 38 secondes");
@@ -364,7 +370,21 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
                         <span key={technology.name}>{technology.name} {technology.version}</span>
                       ))}
                     </div>
-                    <ScanApplicationButton applicationId={application.id} applicationName={application.name} />
+                    <div className="application-row__actions">
+                      <ScanApplicationButton applicationId={application.id} applicationName={application.name} />
+                      <form
+                        action={archiveApplication.bind(null, application.id)}
+                        onSubmit={(event) => {
+                          if (!window.confirm(`Supprimer ${application.name} du monitoring ? Ses contrôles seront arrêtés, mais son historique sera conservé.`)) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        <button className="row-action row-action--danger" type="submit" aria-label={`Supprimer ${application.name}`} title="Supprimer du monitoring">
+                          <Trash2 aria-hidden="true" />
+                        </button>
+                      </form>
+                    </div>
                   </article>
                 ))}
                 {applications.length === 0 && (
@@ -415,6 +435,11 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
               )}
 
               {vps.metrics.length > 0 && <>
+                <div className={`vps-freshness vps-freshness--${vps.freshnessStatus}`}>
+                  <span><strong>Collecte</strong><small>{vps.refreshIntervalLabel}</small></span>
+                  <span><strong>Dernière donnée</strong><small>{vps.dataAgeLabel}</small></span>
+                  <span><strong>Prochaine attendue</strong><small>{vps.nextReportLabel}</small></span>
+                </div>
                 <div className="vps-facts">
                   <span>
                     <ShieldCheck aria-hidden="true" />
@@ -458,7 +483,7 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
                         <h3>{task.title}</h3>
                         <span className={`severity severity--${task.severity}`}>{severityLabels[task.severity]}</span>
                       </div>
-                      <p>{task.source} · {task.dueLabel}</p>
+                      <p><strong>{task.applicationName}</strong> · {task.source} · {task.dueLabel}</p>
                     </div>
                     <button className="row-action" type="button" aria-label={`Ouvrir la tâche ${task.title}`}>
                       <ChevronRight aria-hidden="true" />
@@ -472,6 +497,26 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
                   </div>
                 )}
               </div>
+
+              <details className="maintenance-history">
+                <summary><History aria-hidden="true" /> Historique <span>{maintenanceHistory.length}</span></summary>
+                <div className="maintenance-history__list">
+                  {maintenanceHistory.map((task) => (
+                    <article className="history-row" key={task.id}>
+                      <div>
+                        <strong>{task.title}</strong>
+                        <small>{task.applicationName} · {task.status === "dismissed" ? "Classée" : "Terminée"}{task.completedLabel ? ` le ${task.completedLabel}` : ""}</small>
+                      </div>
+                      <form action={reopenMaintenanceTask.bind(null, task.id)}>
+                        <button className="button button--quiet button--compact" type="submit">
+                          <RotateCcw aria-hidden="true" /> Rouvrir
+                        </button>
+                      </form>
+                    </article>
+                  ))}
+                  {maintenanceHistory.length === 0 && <p className="maintenance-history__empty">Les opérations terminées resteront visibles ici.</p>}
+                </div>
+              </details>
             </section>
 
             <section className="section activity-section" aria-labelledby="activity-title">
@@ -634,6 +679,16 @@ export function Dashboard({ applications, maintenanceTasks, notifications, activ
           <label>
             <span>Action à réaliser</span>
             <input name="title" required minLength={3} maxLength={140} placeholder="Ex. Tester la restauration de la sauvegarde" />
+          </label>
+          <label>
+            <span>Élément concerné</span>
+            <select name="applicationId" defaultValue="infrastructure">
+              <option value="infrastructure">VPS · Infrastructure générale</option>
+              {applications.map((application) => (
+                <option key={application.id} value={application.id}>{application.name}</option>
+              ))}
+            </select>
+            <small className="field-hint">Chaque maintenance applicative restera liée à cette application dans l’historique.</small>
           </label>
           <div className="form-grid">
             <label>

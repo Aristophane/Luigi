@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -9,6 +9,7 @@ import {
   checks,
   dependencies,
   findings,
+  maintenanceTaskEvents,
   maintenanceTasks,
   technologies,
 } from "@/db/schema";
@@ -158,8 +159,9 @@ export async function createApplication(
 
         const dueAt = new Date();
         dueAt.setDate(dueAt.getDate() + (dependency.updateKind === "major" ? 14 : 30));
-        await transaction.insert(maintenanceTasks).values({
+        const [task] = await transaction.insert(maintenanceTasks).values({
           workspaceId,
+          applicationId: application.id,
           findingId: finding.id,
           title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}`,
           description: `Adapter la contrainte ${dependency.requestedRange}, vérifier le changelog et exécuter les tests.`,
@@ -167,6 +169,13 @@ export async function createApplication(
           severity,
           automatic: true,
           dueAt,
+        }).returning({ id: maintenanceTasks.id });
+        await transaction.insert(maintenanceTaskEvents).values({
+          workspaceId,
+          taskId: task.id,
+          action: "created",
+          nextStatus: "open",
+          note: "Tâche créée automatiquement par l’analyse des dépendances.",
         });
       }
     });
@@ -189,15 +198,70 @@ export async function createApplication(
 export async function completeMaintenanceTask(taskId: string) {
   const parsedId = z.string().uuid().safeParse(taskId);
   if (!parsedId.success) return;
-  const { workspaceId } = await requireWorkspace();
+  const { session, workspaceId } = await requireWorkspace();
+  const changedAt = new Date();
 
-  await db
-    .update(maintenanceTasks)
-    .set({ status: "done", completedAt: new Date(), updatedAt: new Date() })
-    .where(and(
-      eq(maintenanceTasks.id, parsedId.data),
-      eq(maintenanceTasks.workspaceId, workspaceId),
-    ));
+  await db.transaction(async (transaction) => {
+    const [task] = await transaction
+      .select({ status: maintenanceTasks.status })
+      .from(maintenanceTasks)
+      .where(and(
+        eq(maintenanceTasks.id, parsedId.data),
+        eq(maintenanceTasks.workspaceId, workspaceId),
+        inArray(maintenanceTasks.status, ["open", "planned", "in_progress"]),
+      ))
+      .limit(1);
+    if (!task || task.status === "done") return;
+
+    await transaction
+      .update(maintenanceTasks)
+      .set({ status: "done", completedAt: changedAt, updatedAt: changedAt })
+      .where(eq(maintenanceTasks.id, parsedId.data));
+    await transaction.insert(maintenanceTaskEvents).values({
+      workspaceId,
+      taskId: parsedId.data,
+      actorId: session.user.id,
+      action: "completed",
+      previousStatus: task.status,
+      nextStatus: "done",
+      note: "Tâche marquée comme terminée depuis le cockpit.",
+    });
+  });
+  revalidatePath("/");
+}
+
+export async function reopenMaintenanceTask(taskId: string) {
+  const parsedId = z.string().uuid().safeParse(taskId);
+  if (!parsedId.success) return;
+  const { session, workspaceId } = await requireWorkspace();
+  const changedAt = new Date();
+
+  await db.transaction(async (transaction) => {
+    const [task] = await transaction
+      .select({ status: maintenanceTasks.status })
+      .from(maintenanceTasks)
+      .where(and(
+        eq(maintenanceTasks.id, parsedId.data),
+        eq(maintenanceTasks.workspaceId, workspaceId),
+        inArray(maintenanceTasks.status, ["done", "dismissed"]),
+      ))
+      .limit(1);
+    if (!task) return;
+
+    await transaction
+      .update(maintenanceTasks)
+      .set({ status: "open", completedAt: null, updatedAt: changedAt })
+      .where(eq(maintenanceTasks.id, parsedId.data));
+    await transaction.insert(maintenanceTaskEvents).values({
+      workspaceId,
+      taskId: parsedId.data,
+      actorId: session.user.id,
+      action: "reopened",
+      previousStatus: task.status,
+      nextStatus: "open",
+      note: "Tâche rouverte depuis l’historique.",
+    });
+  });
   revalidatePath("/");
 }
 
@@ -205,6 +269,7 @@ const taskSchema = z.object({
   title: z.string().trim().min(3, "Le titre doit contenir au moins 3 caractères.").max(140),
   category: z.enum(["security", "dependency", "capacity", "backup", "lifecycle"]),
   severity: z.enum(["critical", "high", "medium", "low"]),
+  applicationId: z.union([z.string().uuid(), z.literal("infrastructure")]).default("infrastructure"),
   dueDate: z.string().optional(),
 });
 
@@ -216,19 +281,100 @@ export async function createMaintenanceTask(
   if (!parsed.success) {
     return { status: "error", message: parsed.error.issues[0]?.message ?? "Formulaire incomplet." };
   }
-  const { workspaceId } = await requireWorkspace();
+  const { session, workspaceId } = await requireWorkspace();
   const dueAt = parsed.data.dueDate ? new Date(`${parsed.data.dueDate}T12:00:00`) : undefined;
+  const applicationId = parsed.data.applicationId === "infrastructure" ? null : parsed.data.applicationId;
 
-  await db.insert(maintenanceTasks).values({
-    workspaceId,
-    title: parsed.data.title,
-    category: parsed.data.category,
-    severity: parsed.data.severity,
-    automatic: false,
-    dueAt,
+  if (applicationId) {
+    const [application] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(and(
+        eq(applications.id, applicationId),
+        eq(applications.workspaceId, workspaceId),
+        isNull(applications.archivedAt),
+      ))
+      .limit(1);
+    if (!application) return { status: "error", message: "Cette application n’est plus disponible." };
+  }
+
+  await db.transaction(async (transaction) => {
+    const [task] = await transaction.insert(maintenanceTasks).values({
+      workspaceId,
+      applicationId,
+      title: parsed.data.title,
+      category: parsed.data.category,
+      severity: parsed.data.severity,
+      automatic: false,
+      dueAt,
+    }).returning({ id: maintenanceTasks.id });
+    await transaction.insert(maintenanceTaskEvents).values({
+      workspaceId,
+      taskId: task.id,
+      actorId: session.user.id,
+      action: "created",
+      nextStatus: "open",
+      note: applicationId ? "Maintenance applicative créée manuellement." : "Maintenance du VPS créée manuellement.",
+    });
   });
   revalidatePath("/");
   return { status: "success", message: "Tâche ajoutée à la liste de maintenance." };
+}
+
+export async function archiveApplication(applicationId: string) {
+  const parsedId = z.string().uuid().safeParse(applicationId);
+  if (!parsedId.success) return;
+  const { session, workspaceId } = await requireWorkspace();
+  const archivedAt = new Date();
+
+  await db.transaction(async (transaction) => {
+    const [application] = await transaction
+      .select({ id: applications.id, name: applications.name })
+      .from(applications)
+      .where(and(
+        eq(applications.id, parsedId.data),
+        eq(applications.workspaceId, workspaceId),
+        isNull(applications.archivedAt),
+      ))
+      .limit(1);
+    if (!application) return;
+
+    const activeTasks = await transaction
+      .select({ id: maintenanceTasks.id, status: maintenanceTasks.status })
+      .from(maintenanceTasks)
+      .where(and(
+        eq(maintenanceTasks.workspaceId, workspaceId),
+        eq(maintenanceTasks.applicationId, application.id),
+        inArray(maintenanceTasks.status, ["open", "planned", "in_progress"]),
+      ));
+
+    await transaction
+      .update(checks)
+      .set({ enabled: false, updatedAt: archivedAt })
+      .where(eq(checks.applicationId, application.id));
+    await transaction
+      .update(applications)
+      .set({ archivedAt, status: "unknown", updatedAt: archivedAt })
+      .where(eq(applications.id, application.id));
+
+    for (const task of activeTasks) {
+      await transaction
+        .update(maintenanceTasks)
+        .set({ status: "dismissed", completedAt: archivedAt, updatedAt: archivedAt })
+        .where(eq(maintenanceTasks.id, task.id));
+      await transaction.insert(maintenanceTaskEvents).values({
+        workspaceId,
+        taskId: task.id,
+        actorId: session.user.id,
+        action: "application_archived",
+        previousStatus: task.status,
+        nextStatus: "dismissed",
+        note: `Tâche classée lors de la suppression de l’application ${application.name}.`,
+      });
+    }
+  });
+
+  revalidatePath("/");
 }
 
 export async function scanApplication(applicationId: string) {

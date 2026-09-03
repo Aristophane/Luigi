@@ -28,6 +28,12 @@ export default async function VpsSettingsPage() {
   const systemLabel = system && typeof system === "object" && "distributionLabel" in system && typeof system.distributionLabel === "string"
     ? system.distributionLabel
     : undefined;
+  const reportIntervalSeconds = typeof agent?.configuration.reportIntervalSeconds === "number"
+    ? agent.configuration.reportIntervalSeconds
+    : 300;
+  const reportIntervalLabel = reportIntervalSeconds < 3600
+    ? `${Math.round(reportIntervalSeconds / 60)} minutes`
+    : `${Math.round(reportIntervalSeconds / 3600)} heures`;
   const connected = Boolean(agent?.fresh);
 
   return (
@@ -50,6 +56,7 @@ export default async function VpsSettingsPage() {
           lastSyncedLabel={agent?.lastSyncedAt?.toLocaleString("fr-FR")}
           enrolledAt={enrolledAt}
           systemLabel={systemLabel}
+          reportIntervalLabel={reportIntervalLabel}
           endpoint={endpoint}
         />
         <aside className="security-note">

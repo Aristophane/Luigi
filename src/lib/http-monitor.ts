@@ -137,7 +137,12 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
     })
     .from(checks)
     .innerJoin(applications, eq(applications.id, checks.applicationId))
-    .where(and(eq(checks.id, checkId), eq(checks.enabled, true), eq(checks.kind, "http")))
+    .where(and(
+      eq(checks.id, checkId),
+      eq(checks.enabled, true),
+      eq(checks.kind, "http"),
+      isNull(applications.archivedAt),
+    ))
     .limit(1);
 
   if (!configuration) throw new Error("CHECK_NOT_FOUND");
@@ -253,7 +258,7 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
 }
 
 export async function runWorkspaceHttpChecks(workspaceId?: string, dueOnly = false) {
-  const predicates = [eq(checks.enabled, true), eq(checks.kind, "http")];
+  const predicates = [eq(checks.enabled, true), eq(checks.kind, "http"), isNull(applications.archivedAt)];
   if (workspaceId) predicates.push(eq(applications.workspaceId, workspaceId));
   if (dueOnly) {
     predicates.push(or(

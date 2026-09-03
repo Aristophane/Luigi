@@ -43,6 +43,7 @@ export async function POST(request: Request) {
           endpoint: enrollment.endpoint,
           enrolledAt: now.toISOString(),
           authentication: "sha256_bearer",
+          reportIntervalSeconds: 300,
         },
       })
       .onConflictDoUpdate({
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
             endpoint: enrollment.endpoint,
             enrolledAt: now.toISOString(),
             authentication: "sha256_bearer",
+            reportIntervalSeconds: 300,
           },
           enabled: true,
           lastSyncedAt: null,

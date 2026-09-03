@@ -1,11 +1,12 @@
 import "server-only";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
   applications,
   dependencies,
   findings,
+  maintenanceTaskEvents,
   maintenanceTasks,
   technologies,
 } from "@/db/schema";
@@ -17,7 +18,11 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
   const [application] = await db
     .select()
     .from(applications)
-    .where(and(eq(applications.id, applicationId), eq(applications.workspaceId, workspaceId)))
+    .where(and(
+      eq(applications.id, applicationId),
+      eq(applications.workspaceId, workspaceId),
+      isNull(applications.archivedAt),
+    ))
     .limit(1);
   if (!application) throw new Error("APPLICATION_NOT_FOUND");
 
@@ -143,8 +148,9 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
       if (!existingTask) {
         const dueAt = new Date();
         dueAt.setDate(dueAt.getDate() + (dependency.updateKind === "major" ? 14 : 30));
-        await transaction.insert(maintenanceTasks).values({
+        const [task] = await transaction.insert(maintenanceTasks).values({
           workspaceId,
+          applicationId: application.id,
           findingId: finding.id,
           title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}`,
           description: `Adapter la contrainte ${dependency.requestedRange}, vérifier le changelog et exécuter les tests.`,
@@ -152,6 +158,13 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
           severity,
           automatic: true,
           dueAt,
+        }).returning({ id: maintenanceTasks.id });
+        await transaction.insert(maintenanceTaskEvents).values({
+          workspaceId,
+          taskId: task.id,
+          action: "created",
+          nextStatus: "open",
+          note: "Tâche créée automatiquement par l’analyse des dépendances.",
         });
       }
     }

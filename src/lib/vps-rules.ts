@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { findings, maintenanceTasks, notifications, vpsMetricSamples } from "@/db/schema";
+import { findings, maintenanceTaskEvents, maintenanceTasks, notifications, vpsMetricSamples } from "@/db/schema";
 import type { VpsReport } from "@/lib/vps-report";
 
 type Rule = {
@@ -26,6 +26,13 @@ async function applyRule(workspaceId: string, rule: Rule, observedAt: Date) {
   if (!rule.active) {
     if (!existing || existing.resolvedAt) return;
     await db.transaction(async (transaction) => {
+      const tasksToResolve = await transaction
+        .select({ id: maintenanceTasks.id, status: maintenanceTasks.status })
+        .from(maintenanceTasks)
+        .where(and(
+          eq(maintenanceTasks.findingId, existing.id),
+          inArray(maintenanceTasks.status, ["open", "planned", "in_progress"]),
+        ));
       await transaction
         .update(findings)
         .set({ resolvedAt: observedAt, updatedAt: observedAt })
@@ -37,6 +44,17 @@ async function applyRule(workspaceId: string, rule: Rule, observedAt: Date) {
           eq(maintenanceTasks.findingId, existing.id),
           inArray(maintenanceTasks.status, ["open", "planned", "in_progress"]),
         ));
+      if (tasksToResolve.length > 0) {
+        await transaction.insert(maintenanceTaskEvents).values(tasksToResolve.map((task) => ({
+          workspaceId,
+          taskId: task.id,
+          action: "auto_resolved",
+          previousStatus: task.status,
+          nextStatus: "done" as const,
+          note: "Le signal VPS à l’origine de la tâche est revenu à la normale.",
+          createdAt: observedAt,
+        })));
+      }
     });
     return;
   }
@@ -78,15 +96,25 @@ async function applyRule(workspaceId: string, rule: Rule, observedAt: Date) {
   if (!activeTask) {
     const dueAt = new Date(observedAt);
     dueAt.setDate(dueAt.getDate() + rule.dueInDays);
-    await db.insert(maintenanceTasks).values({
-      workspaceId,
-      findingId: finding.id,
-      title: rule.taskTitle,
-      description: rule.description,
-      category: rule.kind,
-      severity: rule.severity,
-      automatic: true,
-      dueAt,
+    await db.transaction(async (transaction) => {
+      const [task] = await transaction.insert(maintenanceTasks).values({
+        workspaceId,
+        findingId: finding.id,
+        title: rule.taskTitle,
+        description: rule.description,
+        category: rule.kind,
+        severity: rule.severity,
+        automatic: true,
+        dueAt,
+      }).returning({ id: maintenanceTasks.id });
+      await transaction.insert(maintenanceTaskEvents).values({
+        workspaceId,
+        taskId: task.id,
+        action: "created",
+        nextStatus: "open",
+        note: "Tâche créée automatiquement à partir d’un rapport VPS.",
+        createdAt: observedAt,
+      });
     });
   }
 

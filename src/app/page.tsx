@@ -19,11 +19,12 @@ export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const { session, workspaceId } = await requireWorkspace();
-  const persistedApplications = await db
+  const allPersistedApplications = await db
     .select()
     .from(applicationsTable)
     .where(eq(applicationsTable.workspaceId, workspaceId))
     .orderBy(asc(applicationsTable.createdAt));
+  const persistedApplications = allPersistedApplications.filter((application) => !application.archivedAt);
 
   const persistedTechnologies = persistedApplications.length > 0
     ? await db.select().from(technologiesTable).where(
@@ -67,7 +68,11 @@ export default async function Home() {
     .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "github")))
     .limit(1);
   const [vpsAgent] = await db
-    .select({ label: integrations.label, lastSyncedAt: integrations.lastSyncedAt })
+    .select({
+      label: integrations.label,
+      lastSyncedAt: integrations.lastSyncedAt,
+      configuration: integrations.configuration,
+    })
     .from(integrations)
     .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "vps_agent")))
     .limit(1);
@@ -80,7 +85,7 @@ export default async function Home() {
       swapPercent: vpsMetricSamples.swapPercent,
       payload: vpsMetricSamples.payload,
       observedAt: vpsMetricSamples.observedAt,
-      fresh: sql<boolean>`${vpsMetricSamples.observedAt} >= now() - interval '15 minutes'`,
+      ageSeconds: sql<number>`greatest(0, extract(epoch from (now() - ${vpsMetricSamples.observedAt})))`.mapWith(Number),
     })
     .from(vpsMetricSamples)
     .where(eq(vpsMetricSamples.workspaceId, workspaceId))
@@ -94,6 +99,15 @@ export default async function Home() {
       inArray(maintenanceTasksTable.status, ["open", "planned", "in_progress"]),
     ))
     .orderBy(asc(maintenanceTasksTable.dueAt));
+  const persistedTaskHistory = await db
+    .select()
+    .from(maintenanceTasksTable)
+    .where(and(
+      eq(maintenanceTasksTable.workspaceId, workspaceId),
+      inArray(maintenanceTasksTable.status, ["done", "dismissed"]),
+    ))
+    .orderBy(desc(maintenanceTasksTable.completedAt), desc(maintenanceTasksTable.updatedAt))
+    .limit(20);
   const persistedNotifications = await db
     .select()
     .from(notificationsTable)
@@ -147,7 +161,8 @@ export default async function Home() {
         })),
     };
   });
-  const maintenanceTasks: MaintenanceTask[] = persistedTasks.map((task) => ({
+  const applicationNames = new Map(allPersistedApplications.map((application) => [application.id, application.name]));
+  const mapMaintenanceTask = (task: typeof maintenanceTasksTable.$inferSelect): MaintenanceTask => ({
     id: task.id,
     title: task.title,
     category: task.category,
@@ -156,8 +171,12 @@ export default async function Home() {
       ? `Échéance ${task.dueAt.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`
       : "À planifier",
     source: task.automatic ? "Analyse automatique" : "Tâche manuelle",
-    status: task.status as "open" | "planned" | "in_progress",
-  }));
+    applicationName: task.applicationId ? applicationNames.get(task.applicationId) ?? "Application archivée" : "VPS · Infrastructure",
+    status: task.status,
+    completedLabel: task.completedAt?.toLocaleString("fr-FR"),
+  });
+  const maintenanceTasks = persistedTasks.map(mapMaintenanceTask);
+  const maintenanceHistory = persistedTaskHistory.map(mapMaintenanceTask);
   const dashboardNotifications: DashboardNotification[] = persistedNotifications.map((notification) => ({
     id: notification.id,
     title: notification.title,
@@ -221,12 +240,42 @@ export default async function Home() {
       : vpsMetrics.length > 0
         ? "healthy"
         : "unknown";
+  const configuredRefreshSeconds = typeof vpsAgent?.configuration.reportIntervalSeconds === "number"
+    ? vpsAgent.configuration.reportIntervalSeconds
+    : 300;
+  const refreshIntervalSeconds = Math.max(60, Math.min(configuredRefreshSeconds, 86_400));
+  const reportAgeSeconds = latestVpsSample
+    ? Math.round(latestVpsSample.ageSeconds)
+    : null;
+  const freshnessStatus: VpsOverview["freshnessStatus"] = reportAgeSeconds === null
+    ? "unknown"
+    : reportAgeSeconds <= refreshIntervalSeconds + 60
+      ? "fresh"
+      : reportAgeSeconds <= refreshIntervalSeconds * 3
+        ? "late"
+        : "silent";
+  const durationLabel = (seconds: number) => seconds < 90
+    ? `${seconds} s`
+    : seconds < 3600
+      ? `${Math.round(seconds / 60)} min`
+      : `${Math.round(seconds / 3600)} h`;
+  const nextReportAt = latestVpsSample
+    ? new Date(latestVpsSample.observedAt.getTime() + refreshIntervalSeconds * 1000)
+    : null;
   const vpsOverview: VpsOverview = {
     configured: Boolean(vpsAgent),
-    connected: Boolean(latestVpsSample?.fresh),
-    status: latestVpsSample && !latestVpsSample.fresh ? "warning" : vpsMetricStatus,
+    connected: freshnessStatus === "fresh",
+    status: freshnessStatus === "late" || freshnessStatus === "silent" ? "warning" : vpsMetricStatus,
     hostname: latestVpsSample?.hostname,
     lastSeenLabel: latestVpsSample?.observedAt.toLocaleString("fr-FR") ?? "Aucun rapport reçu",
+    refreshIntervalLabel: `Toutes les ${durationLabel(refreshIntervalSeconds)}`,
+    dataAgeLabel: reportAgeSeconds === null ? "Aucune donnée" : `Il y a ${durationLabel(reportAgeSeconds)}`,
+    nextReportLabel: nextReportAt
+      ? reportAgeSeconds !== null && reportAgeSeconds <= refreshIntervalSeconds
+        ? `Vers ${nextReportAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
+        : `Attendu depuis ${durationLabel(Math.max(0, (reportAgeSeconds ?? refreshIntervalSeconds) - refreshIntervalSeconds))}`
+      : "Après le premier rapport",
+    freshnessStatus,
     metrics: vpsMetrics,
     availableUpdates: vpsPayload?.updates.available ?? 0,
     securityUpdates: vpsPayload?.updates.security ?? 0,
@@ -239,6 +288,7 @@ export default async function Home() {
     <Dashboard
       applications={applications}
       maintenanceTasks={maintenanceTasks}
+      maintenanceHistory={maintenanceHistory}
       notifications={dashboardNotifications}
       activity={activity}
       vps={vpsOverview}

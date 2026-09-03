@@ -95,6 +95,7 @@ export const maintenanceTasks: MaintenanceTask[] = [
     severity: "medium",
     dueLabel: "avant le 8 septembre",
     source: "VPS production",
+    applicationName: "VPS production",
     status: "open",
   },
   {
@@ -104,6 +105,7 @@ export const maintenanceTasks: MaintenanceTask[] = [
     severity: "low",
     dueLabel: "cette semaine",
     source: "Lumen Studio · Renovate",
+    applicationName: "Lumen Studio",
     status: "planned",
   },
   {
@@ -113,6 +115,7 @@ export const maintenanceTasks: MaintenanceTask[] = [
     severity: "medium",
     dueLabel: "dans 12 jours",
     source: "Récurrence trimestrielle",
+    applicationName: "VPS production",
     status: "open",
   },
 ];
