@@ -6,6 +6,8 @@ import { integrations, vpsMetricSamples } from "@/db/schema";
 import { VpsAgentSetup } from "@/components/vps-agent-setup";
 import { requireWorkspace } from "@/lib/dal";
 
+export const dynamic = "force-dynamic";
+
 export default async function VpsSettingsPage() {
   const { workspaceId } = await requireWorkspace();
   const [agent] = await db

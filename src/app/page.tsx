@@ -15,6 +15,8 @@ import { requireWorkspace } from "@/lib/dal";
 import type { ActivityEvent, DashboardNotification, HealthStatus, MaintenanceTask, MonitoredApplication, ServerMetric, VpsOverview } from "@/lib/domain";
 import { vpsReportSchema } from "@/lib/vps-report";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   const { session, workspaceId } = await requireWorkspace();
   const persistedApplications = await db

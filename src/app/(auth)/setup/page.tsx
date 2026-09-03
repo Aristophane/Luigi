@@ -4,6 +4,8 @@ import { AuthShell } from "@/components/auth-shell";
 import { hasConfiguredAdmin } from "@/lib/dal";
 import { setupAdmin } from "@/app/(auth)/actions";
 
+export const dynamic = "force-dynamic";
+
 export default async function SetupPage() {
   if (await hasConfiguredAdmin()) redirect("/login");
 

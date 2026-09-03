@@ -6,6 +6,8 @@ import { integrations } from "@/db/schema";
 import { GitHubIntegrationForm } from "@/components/github-integration-form";
 import { requireWorkspace } from "@/lib/dal";
 
+export const dynamic = "force-dynamic";
+
 export default async function IntegrationsPage() {
   const { workspaceId } = await requireWorkspace();
   const [githubIntegration] = await db
