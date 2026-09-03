@@ -6,6 +6,10 @@ export const metadata: Metadata = {
   title: "Luigi — Cockpit de supervision",
   description: "Supervision apaisée des applications, du VPS et des maintenances.",
   applicationName: "Luigi",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    shortcut: "/icon.svg",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
