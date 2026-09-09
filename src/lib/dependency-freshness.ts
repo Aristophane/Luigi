@@ -19,7 +19,10 @@ async function latestNpmVersion(name: string) {
   return body.version && valid(body.version) ? body.version : undefined;
 }
 
-async function inspectDependency(dependency: DetectedDependency): Promise<DependencyFreshness> {
+async function inspectDependency(
+  dependency: DetectedDependency,
+  getLatestVersion: (name: string) => Promise<string | undefined>,
+): Promise<DependencyFreshness> {
   if (/^(?:workspace:|catalog:|npm:|file:|link:|git(?:hub)?:|https?:)/i.test(dependency.requestedRange)) {
     return { ...dependency, status: "unsupported" };
   }
@@ -32,7 +35,7 @@ async function inspectDependency(dependency: DetectedDependency): Promise<Depend
     : exactVersion;
 
   try {
-    const latest = await latestNpmVersion(dependency.name);
+    const latest = await getLatestVersion(dependency.name);
     if (!latest) return { ...dependency, currentVersion: installedVersion, status: "unknown" };
     const outdated = installedVersion
       ? gt(latest, installedVersion)
@@ -53,12 +56,22 @@ async function inspectDependency(dependency: DetectedDependency): Promise<Depend
 export async function inspectNpmDependencies(dependencies: DetectedDependency[]) {
   const selected = dependencies
     .filter((dependency) => dependency.ecosystem === "npm")
-    .sort((left, right) => Number(left.development) - Number(right.development) || left.name.localeCompare(right.name))
-    .slice(0, 60);
+    .sort((left, right) => Number(left.development) - Number(right.development)
+      || left.manifestPath.localeCompare(right.manifestPath)
+      || left.name.localeCompare(right.name))
+    .slice(0, 200);
   const results: DependencyFreshness[] = [];
+  const latestVersions = new Map<string, Promise<string | undefined>>();
+  const getLatestVersion = (name: string) => {
+    const pending = latestVersions.get(name) ?? latestNpmVersion(name);
+    latestVersions.set(name, pending);
+    return pending;
+  };
 
-  for (let index = 0; index < selected.length; index += 8) {
-    results.push(...await Promise.all(selected.slice(index, index + 8).map(inspectDependency)));
+  for (let index = 0; index < selected.length; index += 12) {
+    results.push(...await Promise.all(selected.slice(index, index + 12).map((dependency) => (
+      inspectDependency(dependency, getLatestVersion)
+    ))));
   }
   return results;
 }

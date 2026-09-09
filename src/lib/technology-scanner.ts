@@ -9,6 +9,7 @@ export type DetectedTechnology = {
 export type DetectedDependency = {
   ecosystem: "npm";
   name: string;
+  manifestPath: string;
   requestedRange: string;
   currentVersion?: string;
   development: boolean;
@@ -85,11 +86,12 @@ function packageLockVersions(content?: string) {
       dependencies?: Record<string, { version?: string }>;
     };
     for (const [path, metadata] of Object.entries(lockfile.packages ?? {})) {
-      if (!path.startsWith("node_modules/") || !metadata.version) continue;
-      versions.set(path.slice("node_modules/".length), metadata.version);
+      if (!metadata.version) continue;
+      versions.set(path.replaceAll("\\", "/").replace(/^\.\//, ""), metadata.version);
     }
     for (const [name, metadata] of Object.entries(lockfile.dependencies ?? {})) {
-      if (metadata.version && !versions.has(name)) versions.set(name, metadata.version);
+      const path = `node_modules/${name}`;
+      if (metadata.version && !versions.has(path)) versions.set(path, metadata.version);
     }
   } catch {
     // Un lockfile illisible ne doit pas empêcher l'analyse du manifeste.
@@ -97,10 +99,36 @@ function packageLockVersions(content?: string) {
   return versions;
 }
 
+function directoryOf(path: string) {
+  const separator = path.lastIndexOf("/");
+  return separator === -1 ? "" : path.slice(0, separator);
+}
+
+function relativeDirectory(parent: string, child: string) {
+  if (!parent) return child;
+  if (child === parent) return "";
+  return child.startsWith(`${parent}/`) ? child.slice(parent.length + 1) : undefined;
+}
+
+function lockedDependencyVersion(
+  versions: Map<string, string>,
+  packageName: string,
+  manifestPath: string,
+  lockPath: string,
+) {
+  const relativeManifestDirectory = relativeDirectory(directoryOf(lockPath), directoryOf(manifestPath));
+  const localPath = relativeManifestDirectory
+    ? `${relativeManifestDirectory}/node_modules/${packageName}`
+    : `node_modules/${packageName}`;
+  return versions.get(localPath) ?? versions.get(`node_modules/${packageName}`);
+}
+
 function packageJsonDependencies(
   content: string,
   evidence: string,
+  manifestPath: string,
   lockedVersions: Map<string, string>,
+  lockPath?: string,
   lockEvidence?: string,
 ): DetectedDependency[] {
   const manifest = JSON.parse(content) as {
@@ -110,18 +138,28 @@ function packageJsonDependencies(
   const runtimeDependencies = Object.entries(manifest.dependencies ?? {}).map(([name, requestedRange]) => ({
     ecosystem: "npm" as const,
     name,
+    manifestPath,
     requestedRange,
-    currentVersion: lockedVersions.get(name),
+    currentVersion: lockPath
+      ? lockedDependencyVersion(lockedVersions, name, manifestPath, lockPath)
+      : undefined,
     development: false,
-    evidence: lockedVersions.has(name) && lockEvidence ? `${evidence} · version via ${lockEvidence}` : evidence,
+    evidence: lockPath && lockedDependencyVersion(lockedVersions, name, manifestPath, lockPath) && lockEvidence
+      ? `${evidence} · version via ${lockEvidence}`
+      : evidence,
   }));
   const developmentDependencies = Object.entries(manifest.devDependencies ?? {}).map(([name, requestedRange]) => ({
     ecosystem: "npm" as const,
     name,
+    manifestPath,
     requestedRange,
-    currentVersion: lockedVersions.get(name),
+    currentVersion: lockPath
+      ? lockedDependencyVersion(lockedVersions, name, manifestPath, lockPath)
+      : undefined,
     development: true,
-    evidence: lockedVersions.has(name) && lockEvidence ? `${evidence} · version via ${lockEvidence}` : evidence,
+    evidence: lockPath && lockedDependencyVersion(lockedVersions, name, manifestPath, lockPath) && lockEvidence
+      ? `${evidence} · version via ${lockEvidence}`
+      : evidence,
   }));
   return [...runtimeDependencies, ...developmentDependencies];
 }
@@ -154,7 +192,7 @@ function composerDetections(content: string, evidence: string) {
 
 function parseManifest(name: string, content: string, commitSha: string) {
   const evidence = `${name} · ${commitSha.slice(0, 7)}`;
-  const lowerName = name.toLowerCase();
+  const lowerName = name.split("/").at(-1)?.toLowerCase() ?? name.toLowerCase();
 
   try {
     if (lowerName === "package.json") return packageJsonDetections(content, evidence);
@@ -180,31 +218,46 @@ function parseManifest(name: string, content: string, commitSha: string) {
 
 export async function scanGitHubTechnologies(repository: string, branch: string, token?: string) {
   const inspection = await inspectGitHubRepository(repository, branch, token);
-  const manifests = inspection.rootContents.filter((entry) => supportedManifests.has(entry.name.toLowerCase()));
-  const files = await Promise.all(manifests.map(async (manifest) => ({
-    manifest,
-    content: await getGitHubFile(repository, manifest.path, branch, token),
-  })));
+  const ignoredDirectories = new Set([".git", ".next", ".turbo", "build", "coverage", "dist", "node_modules", "vendor"]);
+  const manifests = inspection.repositoryFiles.filter((entry) => (
+    supportedManifests.has(entry.name.toLowerCase())
+    && !entry.path.split("/").some((segment) => ignoredDirectories.has(segment.toLowerCase()))
+  ));
+  if (manifests.length > 200) throw new Error("TOO_MANY_MANIFESTS");
+  const files: Array<{ manifest: (typeof manifests)[number]; content: string }> = [];
+  for (let index = 0; index < manifests.length; index += 12) {
+    files.push(...await Promise.all(manifests.slice(index, index + 12).map(async (manifest) => ({
+      manifest,
+      content: await getGitHubFile(repository, manifest.path, branch, token),
+    }))));
+  }
   const detections = new Map<string, DetectedTechnology>();
   const dependencies = new Map<string, DetectedDependency>();
-  const packageLock = files.find(({ manifest }) => manifest.name.toLowerCase() === "package-lock.json");
-  const lockedVersions = packageLockVersions(packageLock?.content);
-  const lockEvidence = packageLock
-    ? `${packageLock.manifest.path} · ${inspection.commitSha.slice(0, 7)}`
-    : undefined;
+  const packageLocks = files
+    .filter(({ manifest }) => manifest.name.toLowerCase() === "package-lock.json")
+    .map((file) => ({ ...file, versions: packageLockVersions(file.content) }));
 
   for (const { manifest, content } of files) {
     for (const detection of parseManifest(manifest.path, content, inspection.commitSha)) {
       addDetection(detections, detection);
     }
     if (manifest.name.toLowerCase() === "package.json") {
+      const manifestDirectory = directoryOf(manifest.path);
+      const packageLock = packageLocks
+        .filter(({ manifest: lockManifest }) => relativeDirectory(directoryOf(lockManifest.path), manifestDirectory) !== undefined)
+        .sort((left, right) => directoryOf(right.manifest.path).length - directoryOf(left.manifest.path).length)[0];
+      const lockEvidence = packageLock
+        ? `${packageLock.manifest.path} · ${inspection.commitSha.slice(0, 7)}`
+        : undefined;
       for (const dependency of packageJsonDependencies(
         content,
         `${manifest.path} · ${inspection.commitSha.slice(0, 7)}`,
-        lockedVersions,
+        manifest.path,
+        packageLock?.versions ?? new Map(),
+        packageLock?.manifest.path,
         lockEvidence,
       )) {
-        dependencies.set(`${dependency.ecosystem}:${dependency.name}`, dependency);
+        dependencies.set(`${dependency.ecosystem}:${dependency.manifestPath}:${dependency.name}`, dependency);
       }
     }
   }

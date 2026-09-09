@@ -98,6 +98,7 @@ export const dependencies = pgTable(
       .references(() => applications.id, { onDelete: "cascade" }),
     ecosystem: text("ecosystem").notNull(),
     name: text("name").notNull(),
+    manifestPath: text("manifest_path").default("package.json").notNull(),
     currentVersion: text("current_version"),
     requestedRange: text("requested_range").notNull(),
     latestVersion: text("latest_version"),
@@ -109,7 +110,8 @@ export const dependencies = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("dependencies_application_ecosystem_name_unique").on(table.applicationId, table.ecosystem, table.name),
+    uniqueIndex("dependencies_application_ecosystem_manifest_name_unique")
+      .on(table.applicationId, table.ecosystem, table.manifestPath, table.name),
     index("dependencies_application_idx").on(table.applicationId),
   ],
 );

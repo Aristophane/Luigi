@@ -17,18 +17,34 @@ import { createOrRefreshNotification, resolveNotification } from "@/lib/notifica
 import { scanGitHubTechnologies } from "@/lib/technology-scanner";
 
 function dependencyCopy(dependency: DependencyFreshness) {
+  const location = dependency.manifestPath === "package.json" ? "" : ` dans ${dependency.manifestPath}`;
   const title = dependency.currentVersion
-    ? `${dependency.name} ${dependency.currentVersion} n’est plus à jour`
-    : `${dependency.name} ne permet pas la dernière version`;
+    ? `${dependency.name} ${dependency.currentVersion} n’est plus à jour${location}`
+    : `${dependency.name} ne permet pas la dernière version${location}`;
   const description = dependency.currentVersion
     ? `Le dépôt verrouille la version ${dependency.currentVersion}. La version ${dependency.latestVersion} est disponible.`
     : `La contrainte ${dependency.requestedRange} n’accepte pas la version ${dependency.latestVersion}.`;
   return { title, description };
 }
 
+function dependencyKey(dependency: { ecosystem: string; manifestPath: string; name: string }) {
+  return `${dependency.ecosystem}:${dependency.manifestPath}:${dependency.name}`;
+}
+
+function dependencyFindingFingerprint(applicationId: string, manifestPath: string, name: string) {
+  const location = manifestPath === "package.json" ? "" : `:${encodeURIComponent(manifestPath)}`;
+  return `application:${applicationId}:dependency:npm${location}:${name}:outdated`;
+}
+
+function dependencyNotificationFingerprint(applicationId: string, manifestPath: string, name: string) {
+  const location = manifestPath === "package.json" ? "" : `:${encodeURIComponent(manifestPath)}`;
+  return `dependency-update:${applicationId}:npm${location}:${name}`;
+}
+
 type DependencyNotification = {
   kind: "update" | "resolved";
   dependencyName: string;
+  manifestPath: string;
   currentVersion?: string;
   latestVersion?: string;
   updateKind?: "major" | "compatible";
@@ -52,7 +68,12 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
   const freshness = await inspectNpmDependencies(scan.dependencies);
   const checkedAt = new Date();
   const existingDependencies = await db
-    .select({ id: dependencies.id, name: dependencies.name })
+    .select({
+      id: dependencies.id,
+      ecosystem: dependencies.ecosystem,
+      name: dependencies.name,
+      manifestPath: dependencies.manifestPath,
+    })
     .from(dependencies)
     .where(and(eq(dependencies.applicationId, application.id), eq(dependencies.ecosystem, "npm")));
   const existingFindings = await db
@@ -74,7 +95,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
     .where(and(eq(notifications.workspaceId, workspaceId), isNull(notifications.resolvedAt)));
   const findingsByFingerprint = new Map(existingFindings.map((finding) => [finding.fingerprint, finding]));
   const notificationFingerprints = new Set(existingNotifications.flatMap((notification) => notification.fingerprint ? [notification.fingerprint] : []));
-  const manifestDependencyNames = new Set(scan.dependencies.map((dependency) => dependency.name));
+  const manifestDependencyKeys = new Set(scan.dependencies.map(dependencyKey));
   const notificationEvents: DependencyNotification[] = [];
 
   await db.transaction(async (transaction) => {
@@ -112,7 +133,14 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
       notificationEvents.push({
         kind: "resolved",
         dependencyName,
-        fingerprint: `dependency-update:${application.id}:npm:${dependencyName}`,
+        manifestPath: trackedFinding.metadata.manifestPath === "string"
+          ? trackedFinding.metadata.manifestPath
+          : "package.json",
+        fingerprint: dependencyNotificationFingerprint(
+          application.id,
+          trackedFinding.metadata.manifestPath === "string" ? trackedFinding.metadata.manifestPath : "package.json",
+          dependencyName,
+        ),
       });
     };
 
@@ -152,6 +180,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
           applicationId: application.id,
           ecosystem: dependency.ecosystem,
           name: dependency.name,
+          manifestPath: dependency.manifestPath,
           currentVersion: dependency.currentVersion,
           requestedRange: dependency.requestedRange,
           latestVersion: dependency.latestVersion,
@@ -161,7 +190,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
           lastCheckedAt: dependency.status === "unsupported" ? undefined : checkedAt,
         })
         .onConflictDoUpdate({
-          target: [dependencies.applicationId, dependencies.ecosystem, dependencies.name],
+          target: [dependencies.applicationId, dependencies.ecosystem, dependencies.manifestPath, dependencies.name],
           set: {
             currentVersion: dependency.currentVersion,
             requestedRange: dependency.requestedRange,
@@ -174,7 +203,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
           },
         });
 
-      const fingerprint = `application:${application.id}:dependency:npm:${dependency.name}:outdated`;
+      const fingerprint = dependencyFindingFingerprint(application.id, dependency.manifestPath, dependency.name);
       const previousFinding = findingsByFingerprint.get(fingerprint);
       if (dependency.status !== "outdated") {
         if (dependency.status !== "unknown" && previousFinding) {
@@ -202,6 +231,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
           metadata: {
             ecosystem: dependency.ecosystem,
             package: dependency.name,
+            manifestPath: dependency.manifestPath,
             currentVersion: dependency.currentVersion,
             requestedRange: dependency.requestedRange,
             latestVersion: dependency.latestVersion,
@@ -218,6 +248,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
             metadata: {
               ecosystem: dependency.ecosystem,
               package: dependency.name,
+              manifestPath: dependency.manifestPath,
               currentVersion: dependency.currentVersion,
               requestedRange: dependency.requestedRange,
               latestVersion: dependency.latestVersion,
@@ -239,11 +270,12 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
       const taskDescription = dependency.currentVersion
         ? `Mettre à jour la version verrouillée ${dependency.currentVersion}, vérifier le changelog et exécuter les tests.`
         : `Adapter la contrainte ${dependency.requestedRange}, vérifier le changelog et exécuter les tests.`;
+      const taskLocation = dependency.manifestPath === "package.json" ? "" : ` · ${dependency.manifestPath}`;
       if (existingTask) {
         await transaction
           .update(maintenanceTasks)
           .set({
-            title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}`,
+            title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}${taskLocation}`,
             description: taskDescription,
             severity,
             updatedAt: checkedAt,
@@ -256,7 +288,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
           workspaceId,
           applicationId: application.id,
           findingId: finding.id,
-          title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}`,
+          title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}${taskLocation}`,
           description: taskDescription,
           category: "dependency",
           severity,
@@ -275,11 +307,12 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
       const previousLatest = typeof previousFinding?.metadata.latestVersion === "string"
         ? previousFinding.metadata.latestVersion
         : undefined;
-      const notificationFingerprint = `dependency-update:${application.id}:npm:${dependency.name}`;
+      const notificationFingerprint = dependencyNotificationFingerprint(application.id, dependency.manifestPath, dependency.name);
       if (!previousFinding || previousFinding.resolvedAt || previousLatest !== dependency.latestVersion || !notificationFingerprints.has(notificationFingerprint)) {
         notificationEvents.push({
           kind: "update",
           dependencyName: dependency.name,
+          manifestPath: dependency.manifestPath,
           currentVersion: dependency.currentVersion,
           latestVersion: dependency.latestVersion,
           updateKind: dependency.updateKind,
@@ -289,9 +322,9 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
     }
 
     for (const storedDependency of existingDependencies) {
-      if (manifestDependencyNames.has(storedDependency.name)) continue;
+      if (manifestDependencyKeys.has(dependencyKey(storedDependency))) continue;
       await transaction.delete(dependencies).where(eq(dependencies.id, storedDependency.id));
-      const fingerprint = `application:${application.id}:dependency:npm:${storedDependency.name}:outdated`;
+      const fingerprint = dependencyFindingFingerprint(application.id, storedDependency.manifestPath, storedDependency.name);
       const previousFinding = findingsByFingerprint.get(fingerprint);
       if (previousFinding) {
         await resolveTrackedFinding(
@@ -308,8 +341,8 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
       workspaceId,
       title: `Nouvelle version de ${event.dependencyName}`,
       body: event.currentVersion
-        ? `${application.name} utilise ${event.currentVersion} ; ${event.latestVersion} est disponible.`
-        : `${application.name} peut être mis à jour vers ${event.latestVersion}.`,
+        ? `${application.name}${event.manifestPath === "package.json" ? "" : ` · ${event.manifestPath}`} utilise ${event.currentVersion} ; ${event.latestVersion} est disponible.`
+        : `${application.name}${event.manifestPath === "package.json" ? "" : ` · ${event.manifestPath}`} peut être mis à jour vers ${event.latestVersion}.`,
       severity: event.updateKind === "major" ? "medium" : "low",
       targetUrl: "/maintenance?category=dependency",
       fingerprint: event.fingerprint,
@@ -317,7 +350,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
     })
     : resolveNotification(workspaceId, event.fingerprint, {
       title: `${event.dependencyName} est à jour`,
-      body: `${application.name} ne nécessite plus cette mise à jour.`,
+      body: `${application.name}${event.manifestPath === "package.json" ? "" : ` · ${event.manifestPath}`} ne nécessite plus cette mise à jour.`,
       targetUrl: `/#application-${application.id}`,
     })));
 

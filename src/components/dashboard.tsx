@@ -542,7 +542,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                               <div className="dependency-table__row" key={`${dependency.ecosystem}:${dependency.name}`}>
                                 <span className="dependency-table__name">
                                   <strong>{dependency.name}</strong>
-                                  {dependency.development && <small>développement</small>}
+                                  <small>{dependency.manifestPath}{dependency.development ? " · développement" : ""}</small>
                                 </span>
                                 <span data-label="Version utilisée">{dependency.currentVersion ?? dependency.requestedRange}</span>
                                 <span data-label="Dernière">{dependency.latestVersion ?? "Indisponible"}</span>

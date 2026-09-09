@@ -20,6 +20,7 @@ export interface Technology {
 export interface MonitoredDependency {
   name: string;
   ecosystem: string;
+  manifestPath: string;
   currentVersion?: string;
   requestedRange: string;
   latestVersion?: string;

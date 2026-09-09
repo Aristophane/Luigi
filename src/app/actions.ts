@@ -180,6 +180,7 @@ export async function createApplication(
           applicationId: application.id,
           ecosystem: dependency.ecosystem,
           name: dependency.name,
+          manifestPath: dependency.manifestPath,
           currentVersion: dependency.currentVersion,
           requestedRange: dependency.requestedRange,
           latestVersion: dependency.latestVersion,
@@ -192,9 +193,13 @@ export async function createApplication(
 
       for (const dependency of dependencyFreshness.filter((item) => item.status === "outdated")) {
         const severity = dependency.updateKind === "major" ? "medium" : "low";
+        const dependencyLocation = dependency.manifestPath === "package.json" ? "" : ` · ${dependency.manifestPath}`;
+        const fingerprintLocation = dependency.manifestPath === "package.json"
+          ? ""
+          : `:${encodeURIComponent(dependency.manifestPath)}`;
         const findingTitle = dependency.currentVersion
-          ? `${dependency.name} ${dependency.currentVersion} n’est plus à jour`
-          : `${dependency.name} ne permet pas la dernière version`;
+          ? `${dependency.name} ${dependency.currentVersion} n’est plus à jour${dependencyLocation}`
+          : `${dependency.name} ne permet pas la dernière version${dependencyLocation}`;
         const findingDescription = dependency.currentVersion
           ? `Le dépôt verrouille la version ${dependency.currentVersion}. La version ${dependency.latestVersion} est disponible.`
           : `La contrainte ${dependency.requestedRange} n’accepte pas la version ${dependency.latestVersion}.`;
@@ -205,10 +210,11 @@ export async function createApplication(
           severity,
           title: findingTitle,
           description: findingDescription,
-          fingerprint: `application:${application.id}:dependency:npm:${dependency.name}:outdated`,
+          fingerprint: `application:${application.id}:dependency:npm${fingerprintLocation}:${dependency.name}:outdated`,
           metadata: {
             ecosystem: dependency.ecosystem,
             package: dependency.name,
+            manifestPath: dependency.manifestPath,
             currentVersion: dependency.currentVersion,
             requestedRange: dependency.requestedRange,
             latestVersion: dependency.latestVersion,
@@ -222,7 +228,7 @@ export async function createApplication(
           workspaceId,
           applicationId: application.id,
           findingId: finding.id,
-          title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}`,
+          title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}${dependencyLocation}`,
           description: dependency.currentVersion
             ? `Mettre à jour la version verrouillée ${dependency.currentVersion}, vérifier le changelog et exécuter les tests.`
             : `Adapter la contrainte ${dependency.requestedRange}, vérifier le changelog et exécuter les tests.`,

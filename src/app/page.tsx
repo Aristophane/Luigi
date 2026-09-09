@@ -175,10 +175,13 @@ export default async function Home() {
         })),
       dependencies: persistedDependencies
         .filter((dependency) => dependency.applicationId === application.id)
-        .sort((left, right) => Number(right.status === "outdated") - Number(left.status === "outdated") || left.name.localeCompare(right.name))
+        .sort((left, right) => Number(right.status === "outdated") - Number(left.status === "outdated")
+          || left.manifestPath.localeCompare(right.manifestPath)
+          || left.name.localeCompare(right.name))
         .map((dependency) => ({
           name: dependency.name,
           ecosystem: dependency.ecosystem,
+          manifestPath: dependency.manifestPath,
           currentVersion: dependency.currentVersion ?? undefined,
           requestedRange: dependency.requestedRange,
           latestVersion: dependency.latestVersion ?? undefined,

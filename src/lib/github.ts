@@ -20,12 +20,20 @@ type GitHubRepository = {
   archived: boolean;
   html_url: string;
 };
-type GitHubBranch = { commit: { sha: string } };
+type GitHubBranch = { commit: { sha: string; commit: { tree: { sha: string } } } };
 type GitHubContentEntry = {
   name: string;
   path: string;
   type: "file" | "dir" | "symlink" | "submodule";
   size: number;
+};
+type GitHubTree = {
+  truncated: boolean;
+  tree: Array<{
+    path: string;
+    type: "blob" | "tree" | "commit";
+    size?: number;
+  }>;
 };
 
 async function githubRequest<T>(path: string, token?: string, accept = "application/vnd.github+json") {
@@ -99,16 +107,31 @@ export async function getGitHubRepository(repository: string, token?: string) {
 
 export async function inspectGitHubRepository(repository: string, branch: string, token?: string) {
   const path = repositoryPath(repository);
-  const [metadata, branchDetails, rootContents] = await Promise.all([
+  const [metadata, branchDetails] = await Promise.all([
     githubRequest<GitHubRepository>(`/repos/${path}`, token),
     githubRequest<GitHubBranch>(`/repos/${path}/branches/${encodeURIComponent(branch)}`, token),
-    githubRequest<GitHubContentEntry[]>(`/repos/${path}/contents?ref=${encodeURIComponent(branch)}`, token),
   ]);
+  const repositoryTree = await githubRequest<GitHubTree>(
+    `/repos/${path}/git/trees/${encodeURIComponent(branchDetails.commit.commit.tree.sha)}?recursive=1`,
+    token,
+  );
+  if (repositoryTree.truncated) {
+    throw new Error("REPOSITORY_TREE_TRUNCATED");
+  }
+  const repositoryFiles: GitHubContentEntry[] = repositoryTree.tree
+    .filter((entry) => entry.type === "blob" && (entry.size ?? 0) <= 1_000_000)
+    .map((entry) => ({
+      name: entry.path.split("/").at(-1) ?? entry.path,
+      path: entry.path,
+      type: "file" as const,
+      size: entry.size ?? 0,
+    }));
 
   return {
     metadata,
     commitSha: branchDetails.commit.sha,
-    rootContents: rootContents.filter((entry) => entry.type === "file" && entry.size <= 1_000_000),
+    rootContents: repositoryFiles.filter((entry) => !entry.path.includes("/")),
+    repositoryFiles,
   };
 }
 
