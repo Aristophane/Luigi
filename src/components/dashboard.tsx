@@ -45,7 +45,6 @@ import {
   type CreateTaskState,
 } from "@/app/actions";
 import { signOut } from "@/app/(auth)/actions";
-import { LivingRail } from "@/components/living-rail";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
 import { StatusDot } from "@/components/status-dot";
 import { ScanApplicationButton } from "@/components/scan-application-button";
@@ -84,6 +83,14 @@ function urlBase64ToUint8Array(value: string) {
   const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
   const bytes = window.atob(base64);
   return Uint8Array.from(bytes, (character) => character.charCodeAt(0));
+}
+
+function displayHost(value: string) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return value.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  }
 }
 
 type DashboardProps = {
@@ -460,16 +467,13 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
             </button>
           </section>
 
-          <LivingRail applicationCount={applications.length} />
-
-          <div className="dashboard-grid">
-            <section className="section applications-section" id="applications" aria-labelledby="applications-title">
+          <section className="section applications-section" id="applications" aria-labelledby="applications-title">
               <div className="section-heading">
                 <div>
-                  <p className="eyebrow">Disponibilité</p>
-                  <h2 id="applications-title">Applications</h2>
+                  <p className="eyebrow">Flux de livraison</p>
+                  <h2 id="applications-title">Applications en circulation</h2>
                 </div>
-                <a className="text-link" href="#applications">Voir les contrôles <ChevronRight aria-hidden="true" /></a>
+                <span className="circulation-key"><GitBranch aria-hidden="true" /> Dépôt <ChevronRight aria-hidden="true" /> Environnement</span>
               </div>
 
               <div className="application-list">
@@ -488,63 +492,102 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                     : application.environment === "staging"
                       ? "Préproduction"
                       : "Développement";
+                  const releaseState = deployment?.matchesRepositoryHead === true
+                    ? "synced"
+                    : deployment?.matchesRepositoryHead === false
+                      ? "drift"
+                      : "unknown";
+                  const releaseLabel = releaseState === "synced"
+                    ? `À jour en ${deploymentEnvironment.toLowerCase()}`
+                    : releaseState === "drift"
+                      ? "Un commit attend d’être déployé"
+                      : deployment
+                        ? "Comparaison en attente"
+                        : "Déploiement non relié";
+                  const repositoryCommitUrl = application.repositoryCommit
+                    ? `https://github.com/${application.githubRepository}/commit/${application.repositoryCommit}`
+                    : `https://github.com/${application.githubRepository}/tree/${application.githubBranch}`;
                   return (
-                  <article className="application-row" id={`application-${application.id}`} key={application.id}>
-                    <div className="application-row__identity">
-                      <StatusDot status={application.status} compact />
-                      <div>
-                        <h3>{application.name}</h3>
-                        <p>{application.url}</p>
-                        <div className="technology-list" aria-label={`Technologies de ${application.name}`}>
-                          {application.technologies.slice(0, 2).map((technology) => (
-                            <span key={technology.name}>{technology.name} {technology.version}</span>
-                          ))}
+                  <article className={`application-route application-route--${releaseState}`} id={`application-${application.id}`} key={application.id}>
+                    <header className="application-route__header">
+                      <div className="application-route__identity">
+                        <StatusDot status={application.status} compact />
+                        <div>
+                          <h3>{application.name}</h3>
+                          <a href={application.url} target="_blank" rel="noreferrer">{application.url}</a>
                         </div>
                       </div>
-                    </div>
-                    <div className="application-row__metric">
-                      <span>Disponibilité</span>
-                      <strong>{application.uptime30d === null ? "En attente" : `${application.uptime30d.toLocaleString("fr-FR")} %`}</strong>
-                    </div>
-                    <div className="application-row__metric">
-                      <span>Réponse</span>
-                      <strong className={application.status === "warning" ? "metric-warning" : ""}>{application.latencyMs === null ? "En attente" : `${application.latencyMs} ms`}</strong>
-                    </div>
-                    <div className={`deployment-proof ${deployment ? "deployment-proof--connected" : "deployment-proof--empty"}${deployment?.matchesRepositoryHead === false ? " deployment-proof--drift" : ""}`}>
-                      <span>{deploymentEnvironment}</span>
-                      {deployment ? <>
-                        {deployment.sourceUrl ? (
-                          <a href={deployment.sourceUrl} target="_blank" rel="noreferrer" title="Ouvrir le déploiement source">
+                      <div className="application-route__signals" aria-label={`État de ${application.name}`}>
+                        <span><small>Disponibilité</small><strong>{application.uptime30d === null ? "En attente" : `${application.uptime30d.toLocaleString("fr-FR")} %`}</strong></span>
+                        <span><small>Réponse</small><strong className={application.status === "warning" ? "metric-warning" : ""}>{application.latencyMs === null ? "En attente" : `${application.latencyMs} ms`}</strong></span>
+                      </div>
+                      <div className="application-route__actions">
+                        <ScanApplicationButton applicationId={application.id} applicationName={application.name} />
+                        <form
+                          action={archiveApplication.bind(null, application.id)}
+                          onSubmit={(event) => {
+                            if (!window.confirm(`Supprimer ${application.name} du monitoring ? Ses contrôles seront arrêtés, mais son historique sera conservé.`)) {
+                              event.preventDefault();
+                            }
+                          }}
+                        >
+                          <button className="row-action row-action--danger" type="submit" aria-label={`Supprimer ${application.name}`} title="Supprimer du monitoring">
+                            <Trash2 aria-hidden="true" />
+                          </button>
+                        </form>
+                      </div>
+                    </header>
+
+                    <div className="release-route" aria-label={`${application.name} : ${application.githubRepository}, commit ${application.repositoryCommit?.slice(0, 7) ?? "inconnu"}, vers ${deploymentEnvironment}, commit ${deployment?.shortCommit ?? "inconnu"}. ${releaseLabel}`}>
+                      <div className="release-station release-station--repository">
+                        <div className="release-station__label"><GitBranch aria-hidden="true" /><span>Dépôt</span></div>
+                        <a className="release-station__title" href={`https://github.com/${application.githubRepository}`} target="_blank" rel="noreferrer">{application.githubRepository}</a>
+                        <span className="release-station__branch">Branche {application.githubBranch}</span>
+                        <a className="release-station__commit" href={repositoryCommitUrl} target="_blank" rel="noreferrer">
+                          <GitCommitHorizontal aria-hidden="true" />
+                          <span><small>Dernier commit présent</small><strong>{application.repositoryCommit?.slice(0, 7) ?? "Non analysé"}</strong></span>
+                        </a>
+                        <small className="release-station__date">Observé · {application.lastRepositoryScanLabel}</small>
+                      </div>
+
+                      <div className="release-track" aria-hidden="true">
+                        <span className="release-track__line" />
+                        <span className="release-track__train"><TrainFront /></span>
+                        <strong>{releaseLabel}</strong>
+                      </div>
+
+                      <div className="release-station release-station--environment">
+                        <div className="release-station__label"><CloudCog aria-hidden="true" /><span>{deploymentEnvironment}</span></div>
+                        <a className="release-station__title" href={application.url} target="_blank" rel="noreferrer">{displayHost(application.url)}</a>
+                        {deployment ? <>
+                          {deployment.sourceUrl ? (
+                            <a className="release-station__commit" href={deployment.sourceUrl} target="_blank" rel="noreferrer" title="Ouvrir le déploiement source">
+                              <GitCommitHorizontal aria-hidden="true" />
+                              <span><small>Version déployée</small><strong>{deployment.shortCommit}</strong></span>
+                            </a>
+                          ) : (
+                            <span className="release-station__commit">
+                              <GitCommitHorizontal aria-hidden="true" />
+                              <span><small>Version déployée</small><strong>{deployment.shortCommit}</strong></span>
+                            </span>
+                          )}
+                          <small className="release-station__date">Déployé le {deployment.deployedAtLabel} · {deploymentSourceLabels[deployment.source] ?? deployment.source}</small>
+                        </> : <>
+                          <span className="release-station__commit release-station__commit--empty">
                             <GitCommitHorizontal aria-hidden="true" />
-                            <strong>{deployment.shortCommit}</strong>
-                          </a>
-                        ) : (
-                          <span className="deployment-proof__commit">
-                            <GitCommitHorizontal aria-hidden="true" />
-                            <strong>{deployment.shortCommit}</strong>
+                            <span><small>Version déployée</small><strong>Signal manquant</strong></span>
                           </span>
-                        )}
-                        <small>Déployé le {deployment.deployedAtLabel} · {deploymentSourceLabels[deployment.source] ?? deployment.source}</small>
-                        {deployment.matchesRepositoryHead === false && <em>Le dépôt a avancé depuis</em>}
-                      </> : <>
-                        <strong>Aucun signal reçu</strong>
-                        <small><Link href="/settings/integrations">Relier à la CI ou à Coolify</Link></small>
-                      </>}
+                          <small className="release-station__date"><Link href="/settings/integrations">Relier la CI ou Coolify</Link></small>
+                        </>}
+                      </div>
                     </div>
-                    <div className="application-row__actions">
-                      <ScanApplicationButton applicationId={application.id} applicationName={application.name} />
-                      <form
-                        action={archiveApplication.bind(null, application.id)}
-                        onSubmit={(event) => {
-                          if (!window.confirm(`Supprimer ${application.name} du monitoring ? Ses contrôles seront arrêtés, mais son historique sera conservé.`)) {
-                            event.preventDefault();
-                          }
-                        }}
-                      >
-                        <button className="row-action row-action--danger" type="submit" aria-label={`Supprimer ${application.name}`} title="Supprimer du monitoring">
-                          <Trash2 aria-hidden="true" />
-                        </button>
-                      </form>
+
+                    <div className="application-route__footer">
+                      <div className="technology-list" aria-label={`Technologies de ${application.name}`}>
+                        {application.technologies.slice(0, 3).map((technology) => (
+                          <span key={technology.name}>{technology.name} {technology.version}</span>
+                        ))}
+                      </div>
                     </div>
                     <details className={`dependency-watch dependency-watch--${dependencyState}`}>
                       <summary>
@@ -593,7 +636,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                             ))}
                           </div>
                         ) : (
-                          <p className="dependency-watch__empty">Ajoute un <strong>package.json</strong> à la racine du dépôt pour suivre ses bibliothèques npm.</p>
+                          <p className="dependency-watch__empty">Aucun <strong>package.json</strong> n’a été détecté dans ce dépôt.</p>
                         )}
                       </div>
                     </details>
@@ -612,6 +655,8 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                 )}
               </div>
             </section>
+
+          <div className="dashboard-grid">
 
             <section className="section vps-section" id="vps" aria-labelledby="vps-title">
               <div className="section-heading">

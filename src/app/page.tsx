@@ -190,6 +190,9 @@ export default async function Home() {
       environment: application.environment,
       status: application.status,
       url: application.publicUrl,
+      githubRepository: application.githubRepository,
+      githubBranch: application.githubBranch,
+      repositoryCommit: application.repositoryCommit ?? undefined,
       uptime30d: uptime?.uptime30d ?? null,
       latencyMs: latest?.latencyMs ?? null,
       lastCheckLabel: latest?.observedAt

@@ -44,6 +44,9 @@ export interface MonitoredApplication {
   environment: "production" | "staging" | "development";
   status: HealthStatus;
   url: string;
+  githubRepository: string;
+  githubBranch: string;
+  repositoryCommit?: string;
   uptime30d: number | null;
   latencyMs: number | null;
   lastCheckLabel: string;
