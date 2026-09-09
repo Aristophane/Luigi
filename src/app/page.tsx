@@ -5,6 +5,7 @@ import {
   applications as applicationsTable,
   checks,
   dependencies as dependenciesTable,
+  deployments,
   integrations,
   maintenanceTasks as maintenanceTasksTable,
   notifications as notificationsTable,
@@ -17,6 +18,10 @@ import type { ActivityEvent, DashboardNotification, HealthStatus, MaintenanceTas
 import { vpsReportSchema } from "@/lib/vps-report";
 
 export const dynamic = "force-dynamic";
+
+function deploymentSourceLabel(source: string) {
+  return { ci: "CI", coolify: "Coolify", "github-actions": "GitHub Actions" }[source] ?? source;
+}
 
 export default async function Home() {
   const { session, workspaceId } = await requireWorkspace();
@@ -35,6 +40,19 @@ export default async function Home() {
   const applicationIds = persistedApplications.map((application) => application.id);
   const persistedDependencies = applicationIds.length > 0
     ? await db.select().from(dependenciesTable).where(inArray(dependenciesTable.applicationId, applicationIds))
+    : [];
+  const latestDeployments = applicationIds.length > 0
+    ? await db
+      .selectDistinctOn([deployments.applicationId], {
+        applicationId: deployments.applicationId,
+        commitSha: deployments.commitSha,
+        source: deployments.source,
+        sourceUrl: deployments.sourceUrl,
+        deployedAt: deployments.deployedAt,
+      })
+      .from(deployments)
+      .where(inArray(deployments.applicationId, applicationIds))
+      .orderBy(deployments.applicationId, desc(deployments.deployedAt))
     : [];
   const uptimeMetrics = applicationIds.length > 0
     ? await db
@@ -146,10 +164,26 @@ export default async function Home() {
       .orderBy(desc(observations.observedAt))
       .limit(6)
     : [];
+  const recentDeployments = applicationIds.length > 0
+    ? await db
+      .select({
+        id: deployments.id,
+        applicationName: applicationsTable.name,
+        commitSha: deployments.commitSha,
+        source: deployments.source,
+        deployedAt: deployments.deployedAt,
+      })
+      .from(deployments)
+      .innerJoin(applicationsTable, eq(applicationsTable.id, deployments.applicationId))
+      .where(eq(applicationsTable.workspaceId, workspaceId))
+      .orderBy(desc(deployments.deployedAt))
+      .limit(6)
+    : [];
 
   const applications: MonitoredApplication[] = persistedApplications.map((application) => {
     const uptime = uptimeMetrics.find((metric) => metric.applicationId === application.id);
     const latest = latestObservations.find((observation) => observation.applicationId === application.id);
+    const productionDeployment = latestDeployments.find((deployment) => deployment.applicationId === application.id);
     return {
       id: application.id,
       name: application.name,
@@ -161,10 +195,25 @@ export default async function Home() {
       lastCheckLabel: latest?.observedAt
         ? latest.observedAt.toLocaleString("fr-FR")
         : "En attente",
-      lastDeployLabel: "Non connecté",
       lastRepositoryScanLabel: application.lastRepositoryScannedAt
         ? application.lastRepositoryScannedAt.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
         : "Jamais analysé",
+      productionDeployment: productionDeployment ? {
+        commitSha: productionDeployment.commitSha,
+        shortCommit: productionDeployment.commitSha.slice(0, 7),
+        deployedAtLabel: productionDeployment.deployedAt.toLocaleString("fr-FR", {
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        source: productionDeployment.source,
+        sourceUrl: productionDeployment.sourceUrl ?? undefined,
+        matchesRepositoryHead: application.repositoryCommit
+          ? application.repositoryCommit.startsWith(productionDeployment.commitSha)
+            || productionDeployment.commitSha.startsWith(application.repositoryCommit)
+          : null,
+      } : undefined,
       technologies: persistedTechnologies
         .filter((technology) => technology.applicationId === application.id)
         .map((technology) => ({
@@ -222,13 +271,33 @@ export default async function Home() {
     targetUrl: notification.targetUrl ?? "/#overview",
     createdLabel: notification.lastOccurredAt.toLocaleString("fr-FR"),
   }));
-  const activity: ActivityEvent[] = recentObservations.map((observation) => ({
-    id: observation.id,
-    title: `Contrôle de ${observation.applicationName}`,
-    detail: observation.detail ?? (observation.statusCode ? `HTTP ${observation.statusCode}` : "Contrôle terminé"),
-    timeLabel: observation.observedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
-    status: observation.status,
-  }));
+  const activity: ActivityEvent[] = [
+    ...recentObservations.map((observation) => ({
+      id: observation.id,
+      title: `Contrôle de ${observation.applicationName}`,
+      detail: observation.detail ?? (observation.statusCode ? `HTTP ${observation.statusCode}` : "Contrôle terminé"),
+      timeLabel: observation.observedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+      status: observation.status,
+      occurredAt: observation.observedAt,
+    })),
+    ...recentDeployments.map((deployment) => ({
+      id: deployment.id,
+      title: `${deployment.applicationName} déployée`,
+      detail: `${deployment.commitSha.slice(0, 7)} · ${deploymentSourceLabel(deployment.source)}`,
+      timeLabel: deployment.deployedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+      status: "healthy" as const,
+      occurredAt: deployment.deployedAt,
+    })),
+  ]
+    .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())
+    .slice(0, 6)
+    .map((event): ActivityEvent => ({
+      id: event.id,
+      title: event.title,
+      detail: event.detail,
+      timeLabel: event.timeLabel,
+      status: event.status,
+    }));
   const parsedVpsReport = latestVpsSample ? vpsReportSchema.safeParse(latestVpsSample.payload) : null;
   const vpsPayload = parsedVpsReport?.success ? parsedVpsReport.data : null;
   const metricStatus = (value: number, warning: number, critical: number): HealthStatus => value >= critical

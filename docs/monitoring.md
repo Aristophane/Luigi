@@ -164,6 +164,8 @@ L’adaptateur Coolify vise d’abord la lecture :
 
 Les opérations d’écriture, redéploiement ou redémarrage ne font pas partie du premier incrément.
 
+Luigi accepte également un signal de fin de déploiement authentifié sur `POST /api/deployments`. La CI ou Coolify transmet l’application, le commit réellement livré, l’identifiant idempotent de l’exécution, la source, la date et éventuellement un lien de diagnostic. Le dernier signal réussi constitue la preuve de la version actuellement en production ; le commit de branche analysé reste une information distincte.
+
 ### VPS
 
 Mesures minimales : CPU, mémoire, espace disque et inodes, charge, uptime, connectivité, dérive de l’horloge et état de l’agent de collecte. Les seuils sont adaptés au serveur et utilisent une durée avant alerte afin d’éviter les pics sans conséquence.

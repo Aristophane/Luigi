@@ -116,6 +116,31 @@ export const dependencies = pgTable(
   ],
 );
 
+export const deployments = pgTable(
+  "deployments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => applications.id, { onDelete: "cascade" }),
+    deploymentId: text("deployment_id").notNull(),
+    commitSha: text("commit_sha").notNull(),
+    source: text("source").default("ci").notNull(),
+    sourceUrl: text("source_url"),
+    deployedAt: timestamp("deployed_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("deployments_application_source_event_unique")
+      .on(table.applicationId, table.source, table.deploymentId),
+    index("deployments_application_time_idx").on(table.applicationId, table.deployedAt),
+    index("deployments_workspace_time_idx").on(table.workspaceId, table.deployedAt),
+  ],
+);
+
 export const technologies = pgTable(
   "technologies",
   {

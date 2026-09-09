@@ -42,6 +42,27 @@ L’endpoint n’exécute que les contrôles arrivés à échéance. Une applica
 
 Le même appel planifie aussi l’analyse des dépendances. Par défaut, chaque dépôt est revérifié toutes les 24 heures, par lots de trois applications afin de ménager GitHub et le registre npm. `DEPENDENCY_SCAN_INTERVAL_HOURS` règle la cadence (de 1 à 168 heures) et `DEPENDENCY_SCAN_BATCH_SIZE` la taille du lot (de 1 à 20). Luigi recherche récursivement les `package.json`, jusqu’à 200 dépendances npm, et associe chaque solution au `package-lock.json` le plus proche. Deux solutions d’un même dépôt peuvent ainsi utiliser et suivre des versions différentes d’une bibliothèque. Une nouvelle version crée une notification et une tâche de maintenance contextualisées par le chemin du manifeste ; une analyse après mise à jour les résout automatiquement.
 
+## Version actuellement déployée
+
+Configure `DEPLOYMENT_INGEST_SECRET`, puis ajoute un appel à Luigi à la fin d’un déploiement réussi. L’application peut être identifiée par son URL publique ou son UUID. `deploymentId` doit identifier une exécution de manière stable afin qu’une relance du même signal ne crée pas de doublon.
+
+```http
+POST /api/deployments
+Authorization: Bearer <DEPLOYMENT_INGEST_SECRET>
+Content-Type: application/json
+
+{
+  "applicationUrl": "https://shop.example.com",
+  "deploymentId": "github-run-12345-1",
+  "commitSha": "0123456789abcdef0123456789abcdef01234567",
+  "source": "github-actions",
+  "sourceUrl": "https://github.com/acme/shop/actions/runs/12345",
+  "deployedAt": "2026-09-09T12:34:56Z"
+}
+```
+
+Le cockpit affiche le commit court, la date, la source et un accès au déploiement. Il indique aussi lorsque la branche analysée sur GitHub contient un commit plus récent que celui actuellement en production.
+
 ## Notifications Web Push
 
 Génère une paire VAPID unique, puis conserve les deux valeurs dans les variables d’environnement de Luigi :

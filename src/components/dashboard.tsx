@@ -8,6 +8,7 @@ import {
   CheckCheck,
   ChevronRight,
   CloudCog,
+  GitCommitHorizontal,
   GitBranch,
   HardDrive,
   History,
@@ -67,6 +68,12 @@ const severityLabels = {
   high: "Élevée",
   medium: "Moyenne",
   low: "Faible",
+};
+
+const deploymentSourceLabels: Record<string, string> = {
+  ci: "CI",
+  coolify: "Coolify",
+  "github-actions": "GitHub Actions",
 };
 
 const initialApplicationState: CreateApplicationState = { status: "idle", message: "" };
@@ -475,6 +482,12 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                     : uncertainDependencies.length > 0 || untrackedDependencies.length > 0
                       ? "unknown"
                       : "current";
+                  const deployment = application.productionDeployment;
+                  const deploymentEnvironment = application.environment === "production"
+                    ? "Production"
+                    : application.environment === "staging"
+                      ? "Préproduction"
+                      : "Développement";
                   return (
                   <article className="application-row" id={`application-${application.id}`} key={application.id}>
                     <div className="application-row__identity">
@@ -482,6 +495,11 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                       <div>
                         <h3>{application.name}</h3>
                         <p>{application.url}</p>
+                        <div className="technology-list" aria-label={`Technologies de ${application.name}`}>
+                          {application.technologies.slice(0, 2).map((technology) => (
+                            <span key={technology.name}>{technology.name} {technology.version}</span>
+                          ))}
+                        </div>
                       </div>
                     </div>
                     <div className="application-row__metric">
@@ -492,10 +510,26 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                       <span>Réponse</span>
                       <strong className={application.status === "warning" ? "metric-warning" : ""}>{application.latencyMs === null ? "En attente" : `${application.latencyMs} ms`}</strong>
                     </div>
-                    <div className="technology-list" aria-label={`Technologies de ${application.name}`}>
-                      {application.technologies.slice(0, 2).map((technology) => (
-                        <span key={technology.name}>{technology.name} {technology.version}</span>
-                      ))}
+                    <div className={`deployment-proof ${deployment ? "deployment-proof--connected" : "deployment-proof--empty"}${deployment?.matchesRepositoryHead === false ? " deployment-proof--drift" : ""}`}>
+                      <span>{deploymentEnvironment}</span>
+                      {deployment ? <>
+                        {deployment.sourceUrl ? (
+                          <a href={deployment.sourceUrl} target="_blank" rel="noreferrer" title="Ouvrir le déploiement source">
+                            <GitCommitHorizontal aria-hidden="true" />
+                            <strong>{deployment.shortCommit}</strong>
+                          </a>
+                        ) : (
+                          <span className="deployment-proof__commit">
+                            <GitCommitHorizontal aria-hidden="true" />
+                            <strong>{deployment.shortCommit}</strong>
+                          </span>
+                        )}
+                        <small>Déployé le {deployment.deployedAtLabel} · {deploymentSourceLabels[deployment.source] ?? deployment.source}</small>
+                        {deployment.matchesRepositoryHead === false && <em>Le dépôt a avancé depuis</em>}
+                      </> : <>
+                        <strong>Aucun signal reçu</strong>
+                        <small><Link href="/settings/integrations">Relier à la CI ou à Coolify</Link></small>
+                      </>}
                     </div>
                     <div className="application-row__actions">
                       <ScanApplicationButton applicationId={application.id} applicationName={application.name} />

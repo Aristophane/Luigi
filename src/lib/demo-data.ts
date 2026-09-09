@@ -15,8 +15,14 @@ export const applications: MonitoredApplication[] = [
     uptime30d: 99.98,
     latencyMs: 184,
     lastCheckLabel: "il y a 38 secondes",
-    lastDeployLabel: "hier à 18:42",
     lastRepositoryScanLabel: "02/09/2026 09:12",
+    productionDeployment: {
+      commitSha: "e7d2a91f4c63b18fd098a4b79ae679d456db2f01",
+      shortCommit: "e7d2a91",
+      deployedAtLabel: "1 sept. à 18:42",
+      source: "github-actions",
+      matchesRepositoryHead: true,
+    },
     technologies: [
       { name: "Next.js", version: "16", source: "confirmed" },
       { name: "Node.js", version: "24", source: "detected", evidence: ".nvmrc" },
@@ -32,7 +38,6 @@ export const applications: MonitoredApplication[] = [
     uptime30d: 100,
     latencyMs: 126,
     lastCheckLabel: "il y a 42 secondes",
-    lastDeployLabel: "25 août à 11:16",
     lastRepositoryScanLabel: "02/09/2026 09:11",
     technologies: [
       { name: "Astro", version: "5", source: "detected", evidence: "package.json" },
@@ -48,7 +53,6 @@ export const applications: MonitoredApplication[] = [
     uptime30d: 99.72,
     latencyMs: 842,
     lastCheckLabel: "il y a 51 secondes",
-    lastDeployLabel: "aujourd’hui à 09:14",
     lastRepositoryScanLabel: "02/09/2026 09:10",
     technologies: [
       { name: "Nuxt", version: "4", source: "confirmed" },

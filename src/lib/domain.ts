@@ -29,6 +29,15 @@ export interface MonitoredDependency {
   evidence: string;
 }
 
+export interface DeploymentSummary {
+  commitSha: string;
+  shortCommit: string;
+  deployedAtLabel: string;
+  source: string;
+  sourceUrl?: string;
+  matchesRepositoryHead: boolean | null;
+}
+
 export interface MonitoredApplication {
   id: string;
   name: string;
@@ -38,8 +47,8 @@ export interface MonitoredApplication {
   uptime30d: number | null;
   latencyMs: number | null;
   lastCheckLabel: string;
-  lastDeployLabel: string;
   lastRepositoryScanLabel: string;
+  productionDeployment?: DeploymentSummary;
   technologies: Technology[];
   dependencies: MonitoredDependency[];
 }

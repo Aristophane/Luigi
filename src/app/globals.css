@@ -919,7 +919,7 @@ h3 {
 
 .application-row {
   display: grid;
-  grid-template-columns: minmax(12rem, 1.4fr) minmax(6rem, 0.65fr) minmax(5rem, 0.55fr) minmax(9rem, 0.9fr) auto;
+  grid-template-columns: minmax(13rem, 1.25fr) minmax(6rem, 0.55fr) minmax(5rem, 0.5fr) minmax(13rem, 1fr) auto;
   align-items: center;
   gap: var(--space-4);
   min-height: 5.4rem;
@@ -977,6 +977,74 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
+}
+
+.application-row__identity .technology-list {
+  margin-top: var(--space-2);
+}
+
+.deployment-proof {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.deployment-proof > span:first-child {
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
+
+.deployment-proof a,
+.deployment-proof__commit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.deployment-proof a:hover {
+  color: var(--brand);
+}
+
+.deployment-proof svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: 0 0 auto;
+}
+
+.deployment-proof strong {
+  overflow: hidden;
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deployment-proof small,
+.deployment-proof em {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-tertiary);
+  font-size: 0.62rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deployment-proof--drift em {
+  color: var(--warning);
+  font-weight: 750;
+}
+
+.deployment-proof--empty strong {
+  color: var(--text-secondary);
+}
+
+.deployment-proof--empty a:hover {
+  color: var(--brand);
 }
 
 .technology-list span,
@@ -2547,6 +2615,26 @@ h3 {
   font-weight: 500;
 }
 
+.deployment-integration__body p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.deployment-integration__body code {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  font-size: 0.76rem;
+}
+
+.deployment-integration__body > small {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+}
+
 .security-note {
   display: flex;
   align-items: flex-start;
@@ -2594,7 +2682,7 @@ h3 {
 
 @media (max-width: 72rem) {
   .application-row {
-    grid-template-columns: minmax(12rem, 1.2fr) minmax(5rem, 0.5fr) minmax(5rem, 0.5fr) auto;
+    grid-template-columns: minmax(12rem, 1.1fr) minmax(5rem, 0.45fr) minmax(5rem, 0.45fr) minmax(11rem, 0.9fr) auto;
   }
 
   .technology-list {
@@ -2946,20 +3034,24 @@ h3 {
   }
 
   .application-row {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--space-3);
   }
 
-  .application-row__metric:nth-of-type(2),
+  .application-row__metric,
   .technology-list {
     display: none;
   }
 
-  .application-row__metric {
-    text-align: right;
+  .deployment-proof {
+    grid-column: 1 / -1;
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--border-subtle);
   }
 
   .application-row__actions {
+    grid-column: 2;
+    grid-row: 1;
     gap: 0;
   }
 
