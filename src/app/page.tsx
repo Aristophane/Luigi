@@ -4,6 +4,7 @@ import { db } from "@/db";
 import {
   applications as applicationsTable,
   checks,
+  dependencies as dependenciesTable,
   integrations,
   maintenanceTasks as maintenanceTasksTable,
   notifications as notificationsTable,
@@ -32,6 +33,9 @@ export default async function Home() {
     )
     : [];
   const applicationIds = persistedApplications.map((application) => application.id);
+  const persistedDependencies = applicationIds.length > 0
+    ? await db.select().from(dependenciesTable).where(inArray(dependenciesTable.applicationId, applicationIds))
+    : [];
   const uptimeMetrics = applicationIds.length > 0
     ? await db
       .select({
@@ -158,6 +162,9 @@ export default async function Home() {
         ? latest.observedAt.toLocaleString("fr-FR")
         : "En attente",
       lastDeployLabel: "Non connecté",
+      lastRepositoryScanLabel: application.lastRepositoryScannedAt
+        ? application.lastRepositoryScannedAt.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
+        : "Jamais analysé",
       technologies: persistedTechnologies
         .filter((technology) => technology.applicationId === application.id)
         .map((technology) => ({
@@ -165,6 +172,19 @@ export default async function Home() {
           version: technology.version ?? undefined,
           source: technology.source as "detected" | "declared" | "confirmed" | "ignored",
           evidence: technology.evidence ?? undefined,
+        })),
+      dependencies: persistedDependencies
+        .filter((dependency) => dependency.applicationId === application.id)
+        .sort((left, right) => Number(right.status === "outdated") - Number(left.status === "outdated") || left.name.localeCompare(right.name))
+        .map((dependency) => ({
+          name: dependency.name,
+          ecosystem: dependency.ecosystem,
+          currentVersion: dependency.currentVersion ?? undefined,
+          requestedRange: dependency.requestedRange,
+          latestVersion: dependency.latestVersion ?? undefined,
+          status: dependency.status,
+          development: dependency.development,
+          evidence: dependency.evidence,
         })),
     };
   });

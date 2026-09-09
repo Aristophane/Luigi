@@ -15,6 +15,7 @@ import {
   ListTodo,
   LogOut,
   Moon,
+  Package,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -23,6 +24,7 @@ import {
   ShieldCheck,
   Sun,
   TrainFront,
+  TriangleAlert,
   Trash2,
 } from "lucide-react";
 import { useActionState, useEffect, useRef, useState } from "react";
@@ -464,7 +466,16 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
               </div>
 
               <div className="application-list">
-                {applications.map((application) => (
+                {applications.map((application) => {
+                  const outdatedDependencies = application.dependencies.filter((dependency) => dependency.status === "outdated");
+                  const uncertainDependencies = application.dependencies.filter((dependency) => dependency.status === "unknown");
+                  const untrackedDependencies = application.dependencies.filter((dependency) => dependency.status === "unsupported");
+                  const dependencyState = outdatedDependencies.length > 0
+                    ? "outdated"
+                    : uncertainDependencies.length > 0 || untrackedDependencies.length > 0
+                      ? "unknown"
+                      : "current";
+                  return (
                   <article className="application-row" id={`application-${application.id}`} key={application.id}>
                     <div className="application-row__identity">
                       <StatusDot status={application.status} compact />
@@ -501,8 +512,60 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                         </button>
                       </form>
                     </div>
+                    <details className={`dependency-watch dependency-watch--${dependencyState}`}>
+                      <summary>
+                        <span className="dependency-watch__title">
+                          {dependencyState === "outdated" ? <TriangleAlert aria-hidden="true" /> : <Package aria-hidden="true" />}
+                          <strong>Bibliothèques</strong>
+                        </span>
+                        <span className="dependency-watch__state">
+                          {outdatedDependencies.length > 0
+                            ? `${outdatedDependencies.length} mise${outdatedDependencies.length > 1 ? "s" : ""} à jour`
+                            : uncertainDependencies.length > 0
+                              ? `${uncertainDependencies.length} à vérifier`
+                              : untrackedDependencies.length > 0
+                                ? `${untrackedDependencies.length} non suivie${untrackedDependencies.length > 1 ? "s" : ""}`
+                              : application.dependencies.length > 0
+                                ? "À jour"
+                                : "Aucune détectée"}
+                        </span>
+                        <span className="dependency-watch__date">Analysé · {application.lastRepositoryScanLabel}</span>
+                        <ChevronRight className="dependency-watch__chevron" aria-hidden="true" />
+                      </summary>
+                      <div className="dependency-watch__body">
+                        {application.dependencies.length > 0 ? (
+                          <div className="dependency-table">
+                            <div className="dependency-table__head" aria-hidden="true">
+                              <span>Bibliothèque</span><span>Version utilisée</span><span>Dernière</span><span>État</span>
+                            </div>
+                            {application.dependencies.map((dependency) => (
+                              <div className="dependency-table__row" key={`${dependency.ecosystem}:${dependency.name}`}>
+                                <span className="dependency-table__name">
+                                  <strong>{dependency.name}</strong>
+                                  {dependency.development && <small>développement</small>}
+                                </span>
+                                <span data-label="Version utilisée">{dependency.currentVersion ?? dependency.requestedRange}</span>
+                                <span data-label="Dernière">{dependency.latestVersion ?? "Indisponible"}</span>
+                                <span data-label="État" className={`dependency-status dependency-status--${dependency.status}`}>
+                                  {dependency.status === "outdated"
+                                    ? "À mettre à jour"
+                                    : dependency.status === "current"
+                                      ? "À jour"
+                                      : dependency.status === "unsupported"
+                                        ? "Non suivie"
+                                        : "À vérifier"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="dependency-watch__empty">Ajoute un <strong>package.json</strong> à la racine du dépôt pour suivre ses bibliothèques npm.</p>
+                        )}
+                      </div>
+                    </details>
                   </article>
-                ))}
+                  );
+                })}
                 {applications.length === 0 && (
                   <div className="empty-state application-empty-state">
                     <CloudCog aria-hidden="true" />

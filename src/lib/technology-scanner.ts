@@ -10,12 +10,14 @@ export type DetectedDependency = {
   ecosystem: "npm";
   name: string;
   requestedRange: string;
+  currentVersion?: string;
   development: boolean;
   evidence: string;
 };
 
 const supportedManifests = new Set([
   "package.json",
+  "package-lock.json",
   "pyproject.toml",
   "requirements.txt",
   "composer.json",
@@ -47,6 +49,7 @@ function packageJsonDetections(content: string, evidence: string) {
   };
   const dependencies = { ...manifest.devDependencies, ...manifest.dependencies };
   const knownPackages: Record<string, string> = {
+    "@vendure/core": "Vendure",
     next: "Next.js",
     react: "React",
     vue: "Vue",
@@ -72,7 +75,34 @@ function packageJsonDetections(content: string, evidence: string) {
   return detections;
 }
 
-function packageJsonDependencies(content: string, evidence: string): DetectedDependency[] {
+function packageLockVersions(content?: string) {
+  const versions = new Map<string, string>();
+  if (!content) return versions;
+
+  try {
+    const lockfile = JSON.parse(content) as {
+      packages?: Record<string, { version?: string }>;
+      dependencies?: Record<string, { version?: string }>;
+    };
+    for (const [path, metadata] of Object.entries(lockfile.packages ?? {})) {
+      if (!path.startsWith("node_modules/") || !metadata.version) continue;
+      versions.set(path.slice("node_modules/".length), metadata.version);
+    }
+    for (const [name, metadata] of Object.entries(lockfile.dependencies ?? {})) {
+      if (metadata.version && !versions.has(name)) versions.set(name, metadata.version);
+    }
+  } catch {
+    // Un lockfile illisible ne doit pas empêcher l'analyse du manifeste.
+  }
+  return versions;
+}
+
+function packageJsonDependencies(
+  content: string,
+  evidence: string,
+  lockedVersions: Map<string, string>,
+  lockEvidence?: string,
+): DetectedDependency[] {
   const manifest = JSON.parse(content) as {
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
@@ -81,15 +111,17 @@ function packageJsonDependencies(content: string, evidence: string): DetectedDep
     ecosystem: "npm" as const,
     name,
     requestedRange,
+    currentVersion: lockedVersions.get(name),
     development: false,
-    evidence,
+    evidence: lockedVersions.has(name) && lockEvidence ? `${evidence} · version via ${lockEvidence}` : evidence,
   }));
   const developmentDependencies = Object.entries(manifest.devDependencies ?? {}).map(([name, requestedRange]) => ({
     ecosystem: "npm" as const,
     name,
     requestedRange,
+    currentVersion: lockedVersions.get(name),
     development: true,
-    evidence,
+    evidence: lockedVersions.has(name) && lockEvidence ? `${evidence} · version via ${lockEvidence}` : evidence,
   }));
   return [...runtimeDependencies, ...developmentDependencies];
 }
@@ -155,13 +187,23 @@ export async function scanGitHubTechnologies(repository: string, branch: string,
   })));
   const detections = new Map<string, DetectedTechnology>();
   const dependencies = new Map<string, DetectedDependency>();
+  const packageLock = files.find(({ manifest }) => manifest.name.toLowerCase() === "package-lock.json");
+  const lockedVersions = packageLockVersions(packageLock?.content);
+  const lockEvidence = packageLock
+    ? `${packageLock.manifest.path} · ${inspection.commitSha.slice(0, 7)}`
+    : undefined;
 
   for (const { manifest, content } of files) {
     for (const detection of parseManifest(manifest.path, content, inspection.commitSha)) {
       addDetection(detections, detection);
     }
     if (manifest.name.toLowerCase() === "package.json") {
-      for (const dependency of packageJsonDependencies(content, `${manifest.path} · ${inspection.commitSha.slice(0, 7)}`)) {
+      for (const dependency of packageJsonDependencies(
+        content,
+        `${manifest.path} · ${inspection.commitSha.slice(0, 7)}`,
+        lockedVersions,
+        lockEvidence,
+      )) {
         dependencies.set(`${dependency.ecosystem}:${dependency.name}`, dependency);
       }
     }

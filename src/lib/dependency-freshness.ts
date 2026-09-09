@@ -1,4 +1,4 @@
-import { major, minVersion, satisfies, valid } from "semver";
+import { gt, major, minVersion, satisfies, valid } from "semver";
 import type { DetectedDependency } from "@/lib/technology-scanner";
 
 export type DependencyFreshness = DetectedDependency & {
@@ -27,20 +27,26 @@ async function inspectDependency(dependency: DetectedDependency): Promise<Depend
   const baseline = minVersion(dependency.requestedRange)?.version;
   if (!baseline) return { ...dependency, status: "unknown" };
   const exactVersion = valid(dependency.requestedRange) ?? undefined;
+  const installedVersion = dependency.currentVersion && valid(dependency.currentVersion)
+    ? dependency.currentVersion
+    : exactVersion;
 
   try {
     const latest = await latestNpmVersion(dependency.name);
-    if (!latest) return { ...dependency, currentVersion: exactVersion, status: "unknown" };
-    const outdated = !satisfies(latest, dependency.requestedRange);
+    if (!latest) return { ...dependency, currentVersion: installedVersion, status: "unknown" };
+    const outdated = installedVersion
+      ? gt(latest, installedVersion)
+      : !satisfies(latest, dependency.requestedRange);
+    const comparisonVersion = installedVersion ?? baseline;
     return {
       ...dependency,
-      currentVersion: exactVersion,
+      currentVersion: installedVersion,
       latestVersion: latest,
       status: outdated ? "outdated" : "current",
-      updateKind: outdated ? (major(latest) > major(baseline) ? "major" : "compatible") : undefined,
+      updateKind: outdated ? (major(latest) > major(comparisonVersion) ? "major" : "compatible") : undefined,
     };
   } catch {
-    return { ...dependency, currentVersion: exactVersion, status: "unknown" };
+    return { ...dependency, currentVersion: installedVersion, status: "unknown" };
   }
 }
 

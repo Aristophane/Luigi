@@ -40,6 +40,8 @@ Authorization: Bearer <MONITOR_CRON_SECRET>
 
 L’endpoint n’exécute que les contrôles arrivés à échéance. Une application passe en vigilance au premier échec ; un incident critique et une notification interne sont créés après trois échecs consécutifs. Le premier succès suivant résout automatiquement l’incident. Les redirections sont contrôlées et les adresses locales ou privées sont refusées afin de limiter les risques SSRF.
 
+Le même appel planifie aussi l’analyse des dépendances. Par défaut, chaque dépôt est revérifié toutes les 24 heures, par lots de trois applications afin de ménager GitHub et le registre npm. `DEPENDENCY_SCAN_INTERVAL_HOURS` règle la cadence (de 1 à 168 heures) et `DEPENDENCY_SCAN_BATCH_SIZE` la taille du lot (de 1 à 20). Luigi lit `package.json` et, lorsqu’il est disponible, `package-lock.json` pour comparer la version réellement verrouillée à la dernière version stable publiée. Une nouvelle version crée une notification et une tâche de maintenance ; une analyse après mise à jour les résout automatiquement.
+
 ## Notifications Web Push
 
 Génère une paire VAPID unique, puis conserve les deux valeurs dans les variables d’environnement de Luigi :
@@ -66,7 +68,7 @@ Chaque navigateur est enregistré séparément et peut être testé ou révoqué
 
 Le cockpit responsive, le socle PWA, PostgreSQL, l’initialisation mono-administrateur et la création persistante d’applications sont opérationnels. Les contrôles HTTP, observations, métriques de disponibilité sur 30 jours, incidents après trois échecs, récupérations et notifications internes sont branchés sur les données réelles.
 
-L’intégration GitHub peut vérifier un jeton finement paramétré, le chiffrer avec `INTEGRATION_ENCRYPTION_KEY` et analyser les dépôts privés autorisés. Les dépôts publics sont analysables sans jeton. Le scanner inspecte les manifests racine, conserve le commit servant de preuve, détecte les technologies et vérifie jusqu’à 60 dépendances npm. Une contrainte n’acceptant plus la dernière version publiée génère automatiquement un constat et une tâche de maintenance.
+L’intégration GitHub peut vérifier un jeton finement paramétré, le chiffrer avec `INTEGRATION_ENCRYPTION_KEY` et analyser les dépôts privés autorisés. Les dépôts publics sont analysables sans jeton. Le scanner inspecte les manifests racine, conserve le commit servant de preuve, détecte les technologies — dont Vendure via `@vendure/core` — et vérifie jusqu’à 60 dépendances npm. Une version verrouillée plus ancienne, ou à défaut une contrainte n’acceptant plus la dernière version publiée, génère automatiquement un constat et une tâche de maintenance.
 
 Pour un jeton GitHub V1, accorde uniquement l’accès aux dépôts nécessaires avec la permission **Contents: Read-only**. Une GitHub App dédiée remplacera avantageusement ce mécanisme lors de la mise en production.
 
@@ -78,4 +80,4 @@ L’explorateur `/storage` ajoute un inventaire disque détaillé toutes les six
 
 Le centre `/maintenance` classe les actions par application, criticité, catégorie et état. Chaque opération expose son contexte, une procédure, les contrôles à effectuer avant clôture et son journal d’audit. Les actions de sécurité disposent d’un accès direct et les notifications correspondantes ouvrent désormais ce niveau de détail.
 
-Le Web Push persistant et le centre de notifications interactif sont branchés. Les alertes critiques ou élevées, les sources silencieuses et les récupérations sont dédupliquées puis distribuées aux navigateurs abonnés. Le prochain incrément prioritaire porte sur les scans planifiés de dépendances et l’agrégation des vulnérabilités OSV ou Dependabot.
+Le Web Push persistant et le centre de notifications interactif sont branchés. Les alertes critiques ou élevées, les sources silencieuses et les récupérations sont dédupliquées puis distribuées aux navigateurs abonnés. Les scans planifiés de dépendances sont actifs ; le prochain incrément prioritaire porte sur l’agrégation des vulnérabilités OSV ou Dependabot.

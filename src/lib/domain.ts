@@ -17,6 +17,17 @@ export interface Technology {
   evidence?: string;
 }
 
+export interface MonitoredDependency {
+  name: string;
+  ecosystem: string;
+  currentVersion?: string;
+  requestedRange: string;
+  latestVersion?: string;
+  status: "current" | "outdated" | "unknown" | "unsupported";
+  development: boolean;
+  evidence: string;
+}
+
 export interface MonitoredApplication {
   id: string;
   name: string;
@@ -27,7 +38,9 @@ export interface MonitoredApplication {
   latencyMs: number | null;
   lastCheckLabel: string;
   lastDeployLabel: string;
+  lastRepositoryScanLabel: string;
   technologies: Technology[];
+  dependencies: MonitoredDependency[];
 }
 
 export interface ServerMetric {

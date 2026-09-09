@@ -16,10 +16,12 @@ export const applications: MonitoredApplication[] = [
     latencyMs: 184,
     lastCheckLabel: "il y a 38 secondes",
     lastDeployLabel: "hier à 18:42",
+    lastRepositoryScanLabel: "02/09/2026 09:12",
     technologies: [
       { name: "Next.js", version: "16", source: "confirmed" },
       { name: "Node.js", version: "24", source: "detected", evidence: ".nvmrc" },
     ],
+    dependencies: [],
   },
   {
     id: "atelier",
@@ -31,9 +33,11 @@ export const applications: MonitoredApplication[] = [
     latencyMs: 126,
     lastCheckLabel: "il y a 42 secondes",
     lastDeployLabel: "25 août à 11:16",
+    lastRepositoryScanLabel: "02/09/2026 09:11",
     technologies: [
       { name: "Astro", version: "5", source: "detected", evidence: "package.json" },
     ],
+    dependencies: [],
   },
   {
     id: "lumen",
@@ -45,10 +49,12 @@ export const applications: MonitoredApplication[] = [
     latencyMs: 842,
     lastCheckLabel: "il y a 51 secondes",
     lastDeployLabel: "aujourd’hui à 09:14",
+    lastRepositoryScanLabel: "02/09/2026 09:10",
     technologies: [
       { name: "Nuxt", version: "4", source: "confirmed" },
       { name: "PostgreSQL", version: "16", source: "declared" },
     ],
+    dependencies: [],
   },
 ];
 

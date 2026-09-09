@@ -192,17 +192,24 @@ export async function createApplication(
 
       for (const dependency of dependencyFreshness.filter((item) => item.status === "outdated")) {
         const severity = dependency.updateKind === "major" ? "medium" : "low";
+        const findingTitle = dependency.currentVersion
+          ? `${dependency.name} ${dependency.currentVersion} n’est plus à jour`
+          : `${dependency.name} ne permet pas la dernière version`;
+        const findingDescription = dependency.currentVersion
+          ? `Le dépôt verrouille la version ${dependency.currentVersion}. La version ${dependency.latestVersion} est disponible.`
+          : `La contrainte ${dependency.requestedRange} n’accepte pas la version ${dependency.latestVersion}.`;
         const [finding] = await transaction.insert(findings).values({
           workspaceId,
           applicationId: application.id,
           kind: "dependency",
           severity,
-          title: `${dependency.name} ne permet pas la dernière version`,
-          description: `La contrainte ${dependency.requestedRange} n’accepte pas la version ${dependency.latestVersion}.`,
+          title: findingTitle,
+          description: findingDescription,
           fingerprint: `application:${application.id}:dependency:npm:${dependency.name}:outdated`,
           metadata: {
             ecosystem: dependency.ecosystem,
             package: dependency.name,
+            currentVersion: dependency.currentVersion,
             requestedRange: dependency.requestedRange,
             latestVersion: dependency.latestVersion,
             updateKind: dependency.updateKind,
@@ -216,7 +223,9 @@ export async function createApplication(
           applicationId: application.id,
           findingId: finding.id,
           title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}`,
-          description: `Adapter la contrainte ${dependency.requestedRange}, vérifier le changelog et exécuter les tests.`,
+          description: dependency.currentVersion
+            ? `Mettre à jour la version verrouillée ${dependency.currentVersion}, vérifier le changelog et exécuter les tests.`
+            : `Adapter la contrainte ${dependency.requestedRange}, vérifier le changelog et exécuter les tests.`,
           category: "dependency",
           severity,
           automatic: true,

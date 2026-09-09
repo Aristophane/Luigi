@@ -24,8 +24,8 @@ export function ScanApplicationButton({ applicationId, applicationName }: { appl
       type="button"
       onClick={runScan}
       disabled={pending}
-      aria-label={`Analyser le dépôt de ${applicationName}`}
-      title={result?.message ?? "Analyser maintenant"}
+      aria-label={`Vérifier les versions utilisées par ${applicationName}`}
+      title={result?.message ?? "Vérifier les versions maintenant"}
     >
       {pending ? <RefreshCw className="spin" aria-hidden="true" /> : result?.status === "success" ? <Check aria-hidden="true" /> : result?.status === "error" ? <TriangleAlert aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
     </button>
