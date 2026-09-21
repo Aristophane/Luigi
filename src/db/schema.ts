@@ -211,6 +211,7 @@ export const checks = pgTable(
     timeoutSeconds: integer("timeout_seconds").default(10).notNull(),
     failureThreshold: integer("failure_threshold").default(3).notNull(),
     latencyWarningMs: integer("latency_warning_ms").default(1500).notNull(),
+    renderingUrl: text("rendering_url"),
     expectedText: text("expected_text"),
     assetProbe: boolean("asset_probe").default(false).notNull(),
     assetUrl: text("asset_url"),

@@ -64,45 +64,87 @@ export function resolveAssetUrl(value: string, pageUrl: string) {
   }
 }
 
+/** Paramètres de redimensionnement usuels : Next.js, Vendure, imgix, Cloudinary, Shopify… */
+const TRANSFORM_PARAMETERS = ["w", "h", "width", "height", "format", "fm", "q", "quality", "preset", "mode", "fit", "resize"];
+
+function isTransformedImageUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return TRANSFORM_PARAMETERS.some((parameter) => url.searchParams.has(parameter));
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Liste les images référencées par une page, celles de l'optimiseur Next.js en premier :
- * ce sont elles qui cessent de répondre quand le processus Node sature.
+ * Liste les images référencées par une page, de la plus révélatrice à la moins révélatrice.
+ * Une image redimensionnée à la volée (optimiseur Next.js, serveur d'assets Vendure, CDN d'images)
+ * sollicite un processus Node qui peut saturer, contrairement à un logo statique ; l'image principale,
+ * chargée sans attendre le défilement, passe devant les vignettes.
  */
 export function extractImageCandidates(html: string, pageUrl: string) {
-  const references: string[] = [];
+  const references: Array<{ value: string; eager: boolean }> = [];
   for (const [tag] of html.matchAll(/<img\b[^>]*>/gi)) {
+    const eager = !/^lazy$/i.test(readAttribute(tag, "loading") ?? "");
     const src = readAttribute(tag, "src");
-    if (src) references.push(src);
-    references.push(...srcsetUrls(readAttribute(tag, "srcset")));
+    if (src) references.push({ value: src, eager });
+    references.push(...srcsetUrls(readAttribute(tag, "srcset")).map((value) => ({ value, eager })));
   }
   for (const [tag] of html.matchAll(/<source\b[^>]*>/gi)) {
-    references.push(...srcsetUrls(readAttribute(tag, "srcset")));
+    references.push(...srcsetUrls(readAttribute(tag, "srcset")).map((value) => ({ value, eager: false })));
   }
   for (const [tag] of html.matchAll(/<link\b[^>]*>/gi)) {
     if (!/^preload$/i.test(readAttribute(tag, "rel") ?? "") || !/^image$/i.test(readAttribute(tag, "as") ?? "")) continue;
     const href = readAttribute(tag, "href");
-    if (href) references.push(href);
-    references.push(...srcsetUrls(readAttribute(tag, "imagesrcset")));
+    if (href) references.push({ value: href, eager: true });
+    references.push(...srcsetUrls(readAttribute(tag, "imagesrcset")).map((value) => ({ value, eager: true })));
   }
 
-  const candidates = new Set<string>();
+  const candidates = new Map<string, { order: number; eager: boolean }>();
   for (const reference of references) {
-    if (/^(data|blob):/i.test(reference)) continue;
-    const resolved = resolveAssetUrl(reference, pageUrl);
-    if (resolved) candidates.add(resolved);
-    if (candidates.size >= MAX_IMAGE_CANDIDATES) break;
+    if (/^(data|blob):/i.test(reference.value)) continue;
+    const resolved = resolveAssetUrl(reference.value, pageUrl);
+    if (!resolved) continue;
+    const known = candidates.get(resolved);
+    if (known) {
+      known.eager ||= reference.eager;
+    } else if (candidates.size < MAX_IMAGE_CANDIDATES) {
+      candidates.set(resolved, { order: candidates.size, eager: reference.eager });
+    }
   }
-  const ordered = [...candidates];
-  return [
-    ...ordered.filter(isNextImageOptimizerUrl),
-    ...ordered.filter((candidate) => !isNextImageOptimizerUrl(candidate)),
-  ];
+  const score = (url: string, eager: boolean) =>
+    (isNextImageOptimizerUrl(url) ? 4 : 0) + (isTransformedImageUrl(url) ? 2 : 0) + (eager ? 1 : 0);
+  return [...candidates.entries()]
+    .sort(([leftUrl, left], [rightUrl, right]) =>
+      score(rightUrl, right.eager) - score(leftUrl, left.eager) || left.order - right.order)
+    .map(([url]) => url);
 }
 
-/** Chemin lisible d'une ressource, sans query string : elle peut porter une signature. */
-export function describeResource(value: string) {
+function readablePath(url: URL) {
   try {
-    return truncateLabel(new URL(value).pathname, 60);
+    return decodeURIComponent(url.pathname);
+  } catch {
+    return url.pathname;
+  }
+}
+
+/**
+ * Libellé lisible d'une ressource. La query string n'est jamais reprise telle quelle, car elle peut porter
+ * une signature : seuls les paramètres de redimensionnement connus sont conservés. L'hôte est indiqué
+ * quand il diffère de la page, par exemple un serveur d'assets séparé.
+ * Pour l'optimiseur Next.js, le chemin seul ne dit pas quelle image a été testée : on affiche sa source.
+ */
+export function describeResource(value: string, pageUrl?: string) {
+  try {
+    const url = new URL(value);
+    const source = isNextImageOptimizerUrl(value) ? url.searchParams.get("url") : null;
+    if (source) return `${truncateLabel(readablePath(new URL(source, url)), 60)} via /_next/image`;
+    const host = pageUrl && new URL(pageUrl).host !== url.host ? url.host : "";
+    const transforms = TRANSFORM_PARAMETERS
+      .filter((parameter) => url.searchParams.has(parameter))
+      .map((parameter) => `${parameter}=${truncateLabel(url.searchParams.get(parameter) ?? "", 12)}`)
+      .join("&");
+    return `${host}${truncateLabel(readablePath(url), 60)}${transforms ? `?${transforms}` : ""}`;
   } catch {
     return "ressource inconnue";
   }

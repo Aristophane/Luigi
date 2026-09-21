@@ -512,6 +512,10 @@ export async function scanApplication(applicationId: string) {
 }
 
 const renderingCheckSchema = z.object({
+  renderingUrl: z.string().trim().max(500, "L’adresse de la page est limitée à 500 caractères.").refine(
+    (value) => value === "" || value.startsWith("/") || /^https?:\/\//i.test(value),
+    "La page doit être un chemin commençant par / ou une URL http(s).",
+  ),
   expectedText: z.string().trim().max(200, "Le texte attendu est limité à 200 caractères."),
   assetProbe: z.boolean(),
   assetUrl: z.string().trim().max(500, "L’adresse de l’image est limitée à 500 caractères.").refine(
@@ -527,6 +531,7 @@ export async function updateRenderingCheck(
   const parsedId = z.string().uuid().safeParse(formData.get("applicationId"));
   if (!parsedId.success) return { status: "error", message: "Application invalide." };
   const parsed = renderingCheckSchema.safeParse({
+    renderingUrl: formData.get("renderingUrl") ?? "",
     expectedText: formData.get("expectedText") ?? "",
     assetProbe: formData.get("assetProbe") === "on",
     assetUrl: formData.get("assetUrl") ?? "",
@@ -553,6 +558,7 @@ export async function updateRenderingCheck(
   await db
     .update(checks)
     .set({
+      renderingUrl: parsed.data.renderingUrl || null,
       expectedText: parsed.data.expectedText || null,
       assetProbe: parsed.data.assetProbe,
       assetUrl: parsed.data.assetUrl || null,

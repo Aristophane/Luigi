@@ -12,7 +12,7 @@ export function RenderingCheckPanel({ application }: { application: MonitoredApp
   const settings = application.renderingCheck;
   if (!settings) return null;
 
-  const configured = Boolean(settings.expectedText) || settings.assetProbe;
+  const configured = Boolean(settings.renderingUrl) || Boolean(settings.expectedText) || settings.assetProbe;
   const tone = configured ? application.lastCheckStatus : "idle";
   const stateLabel = !configured
     ? "Non configuré"
@@ -46,6 +46,21 @@ export function RenderingCheckPanel({ application }: { application: MonitoredApp
             compte comme un échec du contrôle et ouvre un incident au même seuil.
           </p>
           <label>
+            <span>Page à contrôler</span>
+            <input
+              name="renderingUrl"
+              defaultValue={settings.renderingUrl ?? ""}
+              maxLength={500}
+              placeholder="Page d’accueil"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <small className="field-hint">
+              Chemin ou URL complète, par exemple /produits/jade. Choisis une page riche en images, comme une fiche produit.
+              La disponibilité reste mesurée sur la page d’accueil.
+            </small>
+          </label>
+          <label>
             <span>Texte attendu dans la page</span>
             <input
               name="expectedText"
@@ -61,7 +76,10 @@ export function RenderingCheckPanel({ application }: { application: MonitoredApp
             <input name="assetProbe" type="checkbox" defaultChecked={settings.assetProbe} />
             <span>
               Vérifier qu’une image de la page se charge
-              <small className="field-hint">Luigi choisit en priorité une image servie par l’optimiseur Next.js (/_next/image).</small>
+              <small className="field-hint">
+                Luigi choisit en priorité l’image principale redimensionnée à la volée (optimiseur Next.js, serveur
+                d’assets Vendure, CDN d’images) plutôt qu’un logo statique.
+              </small>
             </span>
           </label>
           <label>

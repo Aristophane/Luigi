@@ -40,10 +40,10 @@ Authorization: Bearer <MONITOR_CRON_SECRET>
 
 L’endpoint n’exécute que les contrôles arrivés à échéance. Une application passe en vigilance au premier échec ; un incident critique et une notification interne sont créés après trois échecs consécutifs. Le premier succès suivant résout automatiquement l’incident. Les redirections sont contrôlées et les adresses locales ou privées sont refusées afin de limiter les risques SSRF.
 
-Le bloc **Contrôle du rendu** de chaque application ajoute deux vérifications au contrôle HTTP, car une page peut répondre HTTP 200 alors que ses images ne se chargent plus :
+Le bloc **Contrôle du rendu** de chaque application ajoute des vérifications au contrôle HTTP, car une page peut répondre HTTP 200 alors que ses images ne se chargent plus. Elles s’appliquent à la **page à contrôler**, par exemple une fiche produit `/produits/jade`, ou à défaut à la page d’accueil ; la disponibilité reste mesurée sur la page d’accueil :
 
 - **texte attendu** : chaîne littérale, sensible à la casse, recherchée dans le premier mégaoctet de la page (par exemple `srcset=`) ;
-- **image** : Luigi charge une image de la page, en priorité une URL de l’optimiseur Next.js `/_next/image`, ou l’image indiquée, puis vérifie un statut 2xx, un type `image/*` et un corps non vide. L’en-tête `x-nextjs-cache` est repris dans le détail.
+- **image** : Luigi charge l’image indiquée ou, par défaut, l’image la plus révélatrice de la page : d’abord une URL `/_next/image`, puis une image redimensionnée à la volée (paramètres `w`, `format`, `preset`… d’un serveur d’assets Vendure ou d’un CDN d’images), en privilégiant l’image principale aux vignettes chargées au défilement. Il vérifie un statut 2xx, un type `image/*` et un corps non vide. Le détail indique l’image testée et, le cas échéant, l’en-tête `x-nextjs-cache`.
 
 Un échec compte comme un échec du contrôle : au même seuil, Luigi ouvre un incident « rendu dégradé », distinct d’une indisponibilité. « Enregistrer et tester » exécute immédiatement le contrôle. Si le cache de l’optimiseur est chaud, une panne qui ne touche que les nouvelles variantes d’image peut passer inaperçue : les signaux d’exécution du VPS couvrent ce cas.
 

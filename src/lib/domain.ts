@@ -39,6 +39,7 @@ export interface DeploymentSummary {
 }
 
 export interface RenderingCheckSettings {
+  renderingUrl?: string;
   expectedText?: string;
   assetProbe: boolean;
   assetUrl?: string;

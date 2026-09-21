@@ -171,6 +171,7 @@ function safeFailureDetail(error: unknown) {
 }
 
 type RenderingCheck = {
+  renderingUrl: string | null;
   expectedText: string | null;
   assetProbe: boolean;
   assetUrl: string | null;
@@ -180,61 +181,95 @@ type RenderingCheck = {
 
 type RenderingResult = { status: ObservationStatus; summary: string };
 
+function isTimeout(error: unknown) {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+}
+
+function pageFailureSummary(error: unknown, page: string) {
+  if (error instanceof MonitorTargetError) return `page ${page} non vérifiable · ${error.reason}`;
+  if (isTimeout(error)) return `la page ${page} n’a pas répondu dans le délai`;
+  return `page ${page} injoignable`;
+}
+
 function assetFailureSummary(error: unknown, resource: string) {
   if (error instanceof MonitorTargetError) return `image non vérifiable (${resource}) · ${error.reason}`;
-  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
-    return `l’image n’a pas répondu dans le délai (${resource})`;
-  }
+  if (isTimeout(error)) return `l’image n’a pas répondu dans le délai (${resource})`;
   return `image injoignable (${resource})`;
 }
 
 /**
  * Vérifie ce que voit réellement le visiteur : une page peut répondre HTTP 200
  * alors que ses images, servies par un processus Node saturé, ne se chargent plus.
+ * Sans page dédiée, la page d’accueil déjà téléchargée par le contrôle de disponibilité est réutilisée.
  */
-async function inspectRendering(check: RenderingCheck, page: { url: string; body?: Buffer }): Promise<RenderingResult> {
-  const html = new TextDecoder("utf-8").decode(page.body ?? Buffer.alloc(0));
+async function inspectRendering(check: RenderingCheck, homepage: { url: string; body?: Buffer }): Promise<RenderingResult> {
+  const context: string[] = [];
   const verified: string[] = [];
+  let status: ObservationStatus = "healthy";
+  const fail = (reason: string): RenderingResult => ({ status: "critical", summary: [...context, reason].join(" · ") });
 
+  let page = homepage;
+  if (check.renderingUrl) {
+    const pageTarget = resolveAssetUrl(check.renderingUrl, homepage.url);
+    if (!pageTarget) return fail("l’adresse de la page à contrôler est invalide");
+    const pageLabel = describeResource(pageTarget, homepage.url);
+    try {
+      const response = await fetchTarget(pageTarget, check.timeoutSeconds, { readBytes: MAX_PAGE_BYTES });
+      if (response.statusCode < 200 || response.statusCode >= 400) {
+        return fail(`page ${pageLabel} en erreur HTTP ${response.statusCode}`);
+      }
+      page = response;
+      if (response.latencyMs >= check.latencyWarningMs) {
+        status = "warning";
+        context.push(`page ${pageLabel} lente (${response.latencyMs} ms)`);
+      } else {
+        context.push(`page ${pageLabel} en ${response.latencyMs} ms`);
+      }
+    } catch (error) {
+      return fail(pageFailureSummary(error, pageLabel));
+    }
+  }
+
+  const html = new TextDecoder("utf-8").decode(page.body ?? Buffer.alloc(0));
   if (check.expectedText) {
     if (!html.includes(check.expectedText)) {
-      return { status: "critical", summary: `texte attendu absent : « ${truncateLabel(check.expectedText, 60)} »` };
+      return fail(`texte attendu absent : « ${truncateLabel(check.expectedText, 60)} »`);
     }
     verified.push("texte attendu présent");
   }
-  if (!check.assetProbe) return { status: "healthy", summary: verified.join(" · ") };
+  if (!check.assetProbe) return { status, summary: [...context, ...verified].join(" · ") };
 
   const assetTarget = check.assetUrl
     ? resolveAssetUrl(check.assetUrl, page.url)
     : extractImageCandidates(html, page.url)[0];
   if (!assetTarget) {
-    return {
-      status: "critical",
-      summary: check.assetUrl ? "l’URL de l’image à vérifier est invalide" : "aucune image trouvée dans la page",
-    };
+    return fail(check.assetUrl ? "l’URL de l’image à vérifier est invalide" : "aucune image trouvée dans la page");
   }
 
-  const resource = describeResource(assetTarget);
+  const resource = describeResource(assetTarget, page.url);
   try {
     const asset = await fetchTarget(assetTarget, check.timeoutSeconds, { accept: IMAGE_ACCEPT, readBytes: MIN_IMAGE_BYTES });
     if (asset.statusCode < 200 || asset.statusCode >= 300) {
-      return { status: "critical", summary: `image en erreur HTTP ${asset.statusCode} (${resource})` };
+      return fail(`image en erreur HTTP ${asset.statusCode} (${resource})`);
     }
     if (!asset.contentType.startsWith("image/")) {
-      return { status: "critical", summary: `l’image renvoie ${asset.contentType || "un type inconnu"} (${resource})` };
+      return fail(`l’image renvoie ${asset.contentType || "un type inconnu"} (${resource})`);
     }
     const receivedBytes = asset.body?.byteLength ?? 0;
     if (receivedBytes < MIN_IMAGE_BYTES) {
-      return { status: "critical", summary: `image vide (${receivedBytes} octet${receivedBytes > 1 ? "s" : ""}, ${resource})` };
+      return fail(`image vide (${receivedBytes} octet${receivedBytes > 1 ? "s" : ""}, ${resource})`);
     }
     const cache = asset.cacheStatus ? ` · cache ${asset.cacheStatus}` : "";
     if (asset.latencyMs >= check.latencyWarningMs) {
-      return { status: "warning", summary: [...verified, `image lente (${asset.latencyMs} ms, ${resource})${cache}`].join(" · ") };
+      return {
+        status: "warning",
+        summary: [...context, ...verified, `image lente (${asset.latencyMs} ms, ${resource})${cache}`].join(" · "),
+      };
     }
-    verified.push(`image servie en ${asset.latencyMs} ms${cache}`);
-    return { status: "healthy", summary: verified.join(" · ") };
+    verified.push(`image servie en ${asset.latencyMs} ms (${resource})${cache}`);
+    return { status, summary: [...context, ...verified].join(" · ") };
   } catch (error) {
-    return { status: "critical", summary: assetFailureSummary(error, resource) };
+    return fail(assetFailureSummary(error, resource));
   }
 }
 
@@ -249,6 +284,7 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
       timeoutSeconds: checks.timeoutSeconds,
       failureThreshold: checks.failureThreshold,
       latencyWarningMs: checks.latencyWarningMs,
+      renderingUrl: checks.renderingUrl,
       expectedText: checks.expectedText,
       assetProbe: checks.assetProbe,
       assetUrl: checks.assetUrl,
@@ -270,14 +306,16 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
   let latencyMs = 0;
   let detail = "La cible n’a pas pu être jointe.";
   let failureKind: "availability" | "rendering" = "availability";
-  const inspectsRendering = Boolean(configuration.expectedText) || configuration.assetProbe;
+  const inspectsRendering = Boolean(configuration.renderingUrl)
+    || Boolean(configuration.expectedText)
+    || configuration.assetProbe;
 
   const startedAt = performance.now();
   try {
     const response = await fetchTarget(
       configuration.target,
       configuration.timeoutSeconds,
-      inspectsRendering ? { readBytes: MAX_PAGE_BYTES } : {},
+      inspectsRendering && !configuration.renderingUrl ? { readBytes: MAX_PAGE_BYTES } : {},
     );
     statusCode = response.statusCode;
     latencyMs = response.latencyMs;

@@ -90,6 +90,7 @@ export default async function Home() {
     ? await db
       .select({
         applicationId: checks.applicationId,
+        renderingUrl: checks.renderingUrl,
         expectedText: checks.expectedText,
         assetProbe: checks.assetProbe,
         assetUrl: checks.assetUrl,
@@ -222,6 +223,7 @@ export default async function Home() {
         ? application.lastRepositoryScannedAt.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
         : "Jamais analysé",
       renderingCheck: httpCheck ? {
+        renderingUrl: httpCheck.renderingUrl ?? undefined,
         expectedText: httpCheck.expectedText ?? undefined,
         assetProbe: httpCheck.assetProbe,
         assetUrl: httpCheck.assetUrl ?? undefined,
