@@ -1294,6 +1294,68 @@ h3 {
   font-size: 0.74rem;
 }
 
+.rendering-watch {
+  margin-top: 0;
+}
+
+.rendering-watch--warning .dependency-watch__title,
+.rendering-watch--warning .dependency-watch__state {
+  color: var(--warning);
+}
+
+.rendering-watch--critical .dependency-watch__title,
+.rendering-watch--critical .dependency-watch__state {
+  color: var(--critical);
+}
+
+.rendering-watch__last {
+  max-width: 42rem;
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+.rendering-form {
+  max-width: 42rem;
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.65rem;
+  background: var(--surface-subtle);
+}
+
+.rendering-form__intro {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+}
+
+.rendering-form .checkbox-field {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.rendering-form .checkbox-field input {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  min-height: 0;
+  margin: 0.1rem 0 0;
+  padding: 0;
+  accent-color: var(--brand);
+}
+
+.rendering-form .checkbox-field > span {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rendering-form .app-form__actions {
+  margin-top: 0;
+}
+
 @media (max-width: 640px) {
   .dependency-watch summary {
     grid-template-columns: minmax(0, 1fr) auto 1rem;
@@ -1451,6 +1513,15 @@ h3 {
 .vps-facts small {
   color: var(--text-tertiary);
   font-size: 0.66rem;
+}
+
+.vps-facts .vps-fact--warning svg {
+  color: var(--warning);
+}
+
+.vps-facts .vps-fact--critical svg,
+.vps-facts .vps-fact--critical strong {
+  color: var(--critical);
 }
 
 .vps-empty-state {
@@ -1960,6 +2031,16 @@ h3 {
   border-radius: 0.55rem;
   background: var(--critical-soft);
   color: var(--critical);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.form-warning {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: 0.55rem;
+  background: var(--warning-soft);
+  color: color-mix(in oklch, var(--warning), var(--text-primary) 35%);
   font-size: 0.78rem;
   font-weight: 650;
 }

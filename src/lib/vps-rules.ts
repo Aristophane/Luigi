@@ -1,10 +1,16 @@
 import "server-only";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, like, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { findings, maintenanceTaskEvents, maintenanceTasks, vpsMetricSamples } from "@/db/schema";
 import { createOrRefreshNotification, resolveNotification } from "@/lib/notifications";
-import type { VpsReport } from "@/lib/vps-report";
+import { vpsReportSchema, type VpsReport, type VpsRuntime } from "@/lib/vps-report";
+
+const RUNTIME_WINDOW_MS = 24 * 60 * 60 * 1000;
+const RUNTIME_FINGERPRINT_PREFIX = "vps:runtime:";
+const HOST_OOM_FINGERPRINT = `${RUNTIME_FINGERPRINT_PREFIX}oom-host`;
+const MEMORY_CEILING_RATIO = 0.85;
+const MEMORY_CEILING_RECOVERY_RATIO = 0.8;
 
 type Rule = {
   fingerprint: string;
@@ -244,6 +250,196 @@ export async function evaluateVpsReport(workspaceId: string, report: VpsReport, 
       dueInDays: 1,
     },
   ];
+
+  for (const rule of rules) await applyRule(workspaceId, rule, observedAt);
+  if (report.runtime) await evaluateRuntime(workspaceId, report.runtime, observedAt);
+}
+
+type RuntimeEvent = VpsRuntime["events"][number];
+type RuntimeUnit = VpsRuntime["units"][number];
+
+function formatBytes(value: number) {
+  const mebibytes = value / (1024 * 1024);
+  return mebibytes >= 1024
+    ? `${(mebibytes / 1024).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Go`
+    : `${Math.round(mebibytes)} Mo`;
+}
+
+function formatEventTime(value: string) {
+  return new Date(value).toLocaleString("fr-FR", {
+    timeZone: "Europe/Paris",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function latestEvent(events: RuntimeEvent[]) {
+  return events.reduce((latest, event) => Date.parse(event.occurredAt) > Date.parse(latest.occurredAt) ? event : latest);
+}
+
+function unitNoun(unitKey: string) {
+  return unitKey.startsWith("container:") ? "le conteneur" : unitKey.startsWith("service:") ? "le service" : "son groupe de processus";
+}
+
+/**
+ * Un arrêt mémoire du noyau ou un redémarrage automatique reste signalé 24 h :
+ * une fuite relance souvent le même cycle quelques heures plus tard.
+ */
+function crashRule(unitKey: string, events: RuntimeEvent[]): Rule {
+  const label = latestEvent(events).unitLabel;
+  const oomKills = events.filter((event) => event.type === "oom_kill");
+  const restarts = events
+    .filter((event) => event.type === "restart")
+    .reduce((total, event) => total + (event.count ?? 1), 0);
+  const fingerprint = `${RUNTIME_FINGERPRINT_PREFIX}crash:${unitKey}`;
+
+  if (oomKills.length > 0) {
+    const lastKill = latestEvent(oomKills);
+    const cause = lastKill.scope === "host"
+      ? "car le VPS manquait de mémoire"
+      : `car ${unitNoun(unitKey)} a atteint sa limite mémoire`;
+    const residentMemory = lastKill.anonRssBytes ? `, ${formatBytes(lastKill.anonRssBytes)} en mémoire` : "";
+    const followingRestarts = restarts > 0
+      ? ` ${restarts} redémarrage${restarts > 1 ? "s" : ""} automatique${restarts > 1 ? "s ont" : " a"} suivi.`
+      : "";
+    return {
+      fingerprint,
+      active: true,
+      kind: "capacity",
+      severity: "critical",
+      findingTitle: `${label} : ${oomKills.length} arrêt${oomKills.length > 1 ? "s" : ""} par manque de mémoire en 24 h`,
+      description: `Le noyau a arrêté ${lastKill.task || "un processus"} ${cause} (dernier arrêt le ${formatEventTime(lastKill.occurredAt)}${residentMemory}).${followingRestarts} Rechercher une fuite mémoire, vérifier la taille du heap Node (--max-old-space-size) et la limite mémoire définie dans Coolify.`,
+      taskTitle: `Corriger la saturation mémoire de ${label}`,
+      dueInDays: 1,
+    };
+  }
+
+  const repeated = restarts >= 3;
+  return {
+    fingerprint,
+    active: true,
+    kind: "capacity",
+    severity: repeated ? "critical" : "high",
+    findingTitle: `${label} a redémarré ${restarts} fois sans intervention en 24 h`,
+    description: `Dernier redémarrage le ${formatEventTime(latestEvent(events).occurredAt)}. Consulter les journaux juste avant cette heure : un dépassement du heap V8 (« Reached heap limit ») arrête Node sans passer par le noyau et n’apparaît que sous forme de redémarrage.`,
+    taskTitle: `Diagnostiquer les redémarrages de ${label}`,
+    dueInDays: repeated ? 1 : 2,
+  };
+}
+
+function memoryRatio(unit: RuntimeUnit | undefined) {
+  if (!unit?.running || !unit.memoryMaxBytes || unit.memoryCurrentBytes === null) return null;
+  return unit.memoryCurrentBytes / unit.memoryMaxBytes;
+}
+
+async function unexplainedOomKills(workspaceId: string, runtime: VpsRuntime, observedAt: Date, attributed: number) {
+  if (runtime.oomKillsSinceBoot === null) return 0;
+  const [baseline] = await db
+    .select({ payload: vpsMetricSamples.payload })
+    .from(vpsMetricSamples)
+    .where(and(
+      eq(vpsMetricSamples.workspaceId, workspaceId),
+      gte(vpsMetricSamples.observedAt, new Date(observedAt.getTime() - RUNTIME_WINDOW_MS)),
+    ))
+    .orderBy(asc(vpsMetricSamples.observedAt))
+    .limit(1);
+  const baselineRuntime = baseline ? vpsReportSchema.safeParse(baseline.payload).data?.runtime : undefined;
+  if (!baselineRuntime || baselineRuntime.oomKillsSinceBoot === null) return 0;
+  // Après un redémarrage du VPS dans la fenêtre, tout le compteur courant appartient aux dernières 24 h.
+  const increase = baselineRuntime.bootId === runtime.bootId
+    ? runtime.oomKillsSinceBoot - baselineRuntime.oomKillsSinceBoot
+    : runtime.oomKillsSinceBoot;
+  return Math.max(0, increase - attributed);
+}
+
+async function evaluateRuntime(workspaceId: string, runtime: VpsRuntime, observedAt: Date) {
+  const collectorFresh = runtime.collectedAt !== null;
+  const windowStart = observedAt.getTime() - RUNTIME_WINDOW_MS;
+  const recentEvents = collectorFresh
+    ? runtime.events.filter((event) => Date.parse(event.occurredAt) >= windowStart)
+    : [];
+  const openRuntimeFindings = await db
+    .select({ fingerprint: findings.fingerprint, title: findings.title })
+    .from(findings)
+    .where(and(
+      eq(findings.workspaceId, workspaceId),
+      isNull(findings.resolvedAt),
+      like(findings.fingerprint, `${RUNTIME_FINGERPRINT_PREFIX}%`),
+    ));
+  const openFingerprints = new Set(openRuntimeFindings.map((finding) => finding.fingerprint));
+  const rules: Rule[] = [];
+
+  const eventsByUnit = new Map<string, RuntimeEvent[]>();
+  for (const event of recentEvents) {
+    eventsByUnit.set(event.unitKey, [...eventsByUnit.get(event.unitKey) ?? [], event]);
+  }
+  for (const [unitKey, events] of eventsByUnit) rules.push(crashRule(unitKey, events));
+
+  const [previousSample] = await db
+    .select({ payload: vpsMetricSamples.payload })
+    .from(vpsMetricSamples)
+    .where(and(eq(vpsMetricSamples.workspaceId, workspaceId), lt(vpsMetricSamples.observedAt, observedAt)))
+    .orderBy(desc(vpsMetricSamples.observedAt))
+    .limit(1);
+  const previousUnits = previousSample
+    ? vpsReportSchema.safeParse(previousSample.payload).data?.runtime?.units ?? []
+    : [];
+  for (const unit of collectorFresh ? runtime.units : []) {
+    const ratio = memoryRatio(unit);
+    if (ratio === null || unit.memoryCurrentBytes === null || !unit.memoryMaxBytes) continue;
+    const fingerprint = `${RUNTIME_FINGERPRINT_PREFIX}memory-ceiling:${unit.key}`;
+    const previousRatio = memoryRatio(previousUnits.find((candidate) => candidate.key === unit.key)) ?? 0;
+    const sustained = ratio >= MEMORY_CEILING_RATIO && previousRatio >= MEMORY_CEILING_RATIO;
+    const stillHigh = openFingerprints.has(fingerprint) && ratio >= MEMORY_CEILING_RECOVERY_RATIO;
+    if (!sustained && !stillHigh) continue;
+    const subject = unit.kind === "container" ? "Le conteneur" : "Le service";
+    rules.push({
+      fingerprint,
+      active: true,
+      kind: "capacity",
+      severity: "high",
+      findingTitle: `${unit.label} utilise ${Math.round(ratio * 100)} % de sa limite mémoire`,
+      description: `${subject} occupe ${formatBytes(unit.memoryCurrentBytes)} sur ${formatBytes(unit.memoryMaxBytes)} depuis au moins deux collectes. Au-delà de la limite, le noyau arrête le processus. Rechercher une fuite mémoire ou ajuster la limite dans Coolify.`,
+      taskTitle: `Examiner la consommation mémoire de ${unit.label}`,
+      dueInDays: 2,
+    });
+  }
+
+  const attributedOomKills = recentEvents.filter((event) => event.type === "oom_kill").length;
+  const unexplained = await unexplainedOomKills(workspaceId, runtime, observedAt, attributedOomKills);
+  rules.push({
+    fingerprint: HOST_OOM_FINGERPRINT,
+    active: unexplained > 0,
+    kind: "capacity",
+    severity: "critical",
+    findingTitle: `${unexplained} processus arrêté${unexplained > 1 ? "s" : ""} par manque de mémoire sur le VPS en 24 h`,
+    description: collectorFresh
+      ? "Le noyau a arrêté des processus faute de mémoire sans que le collecteur d’exécution puisse les rattacher à un conteneur ou un service. Consulter « journalctl -k | grep -i oom » sur le VPS."
+      : "Le noyau a arrêté des processus faute de mémoire. Le collecteur d’exécution ne répond pas : réinstalle l’agent depuis Paramètres → VPS pour identifier le conteneur concerné.",
+    taskTitle: "Identifier le processus arrêté par manque de mémoire",
+    dueInDays: 1,
+  });
+
+  // Les constats par conteneur disparus du rapport se résolvent, mais seulement si le collecteur répond :
+  // son silence ne prouve pas un retour à la normale.
+  if (collectorFresh) {
+    const activeFingerprints = new Set(rules.map((rule) => rule.fingerprint));
+    for (const finding of openRuntimeFindings) {
+      if (activeFingerprints.has(finding.fingerprint)) continue;
+      rules.push({
+        fingerprint: finding.fingerprint,
+        active: false,
+        kind: "capacity",
+        severity: "low",
+        findingTitle: finding.title,
+        description: "",
+        taskTitle: "",
+        dueInDays: 0,
+      });
+    }
+  }
 
   for (const rule of rules) await applyRule(workspaceId, rule, observedAt);
 }

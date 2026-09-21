@@ -18,6 +18,7 @@ export const applications: MonitoredApplication[] = [
     uptime30d: 99.98,
     latencyMs: 184,
     lastCheckLabel: "il y a 38 secondes",
+    lastCheckStatus: "healthy",
     lastRepositoryScanLabel: "02/09/2026 09:12",
     productionDeployment: {
       commitSha: "e7d2a91f4c63b18fd098a4b79ae679d456db2f01",
@@ -44,6 +45,7 @@ export const applications: MonitoredApplication[] = [
     uptime30d: 100,
     latencyMs: 126,
     lastCheckLabel: "il y a 42 secondes",
+    lastCheckStatus: "healthy",
     lastRepositoryScanLabel: "02/09/2026 09:11",
     technologies: [
       { name: "Astro", version: "5", source: "detected", evidence: "package.json" },
@@ -62,6 +64,7 @@ export const applications: MonitoredApplication[] = [
     uptime30d: 99.72,
     latencyMs: 842,
     lastCheckLabel: "il y a 51 secondes",
+    lastCheckStatus: "warning",
     lastRepositoryScanLabel: "02/09/2026 09:10",
     technologies: [
       { name: "Nuxt", version: "4", source: "confirmed" },

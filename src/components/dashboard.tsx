@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   ListTodo,
   LogOut,
+  MemoryStick,
   Moon,
   Package,
   Plus,
@@ -47,6 +48,7 @@ import {
 import { signOut } from "@/app/(auth)/actions";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
 import { StatusDot } from "@/components/status-dot";
+import { RenderingCheckPanel } from "@/components/rendering-check-panel";
 import { ScanApplicationButton } from "@/components/scan-application-button";
 import type { ActivityEvent, DashboardNotification, GitHubRepositoryOption, MaintenanceTask, MonitoredApplication, VpsOverview } from "@/lib/domain";
 
@@ -640,6 +642,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                         )}
                       </div>
                     </details>
+                    <RenderingCheckPanel application={application} />
                   </article>
                   );
                 })}
@@ -709,6 +712,30 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                     <HardDrive aria-hidden="true" />
                     <strong>{vps.backupStatus === "ok" ? "Réussie" : vps.backupStatus === "failed" ? "À vérifier" : "Non configurée"}</strong>
                     <small>Sauvegarde · {vps.lastSeenLabel}</small>
+                  </span>
+                  <span className={`vps-fact--${vps.runtime.oomKills24h > 0
+                    ? "critical"
+                    : vps.runtime.restarts24h > 0 || vps.runtime.collector !== "fresh" ? "warning" : "healthy"}`}
+                  >
+                    <MemoryStick aria-hidden="true" />
+                    <strong>
+                      {vps.runtime.collector === "missing"
+                        ? "Non activés"
+                        : vps.runtime.collector === "silent"
+                          ? "Collecteur muet"
+                          : vps.runtime.oomKills24h > 0
+                            ? `${vps.runtime.oomKills24h} arrêt${vps.runtime.oomKills24h > 1 ? "s" : ""} mémoire`
+                            : vps.runtime.restarts24h > 0
+                              ? `${vps.runtime.restarts24h} redémarrage${vps.runtime.restarts24h > 1 ? "s" : ""}`
+                              : "Aucun arrêt"}
+                    </strong>
+                    <small>
+                      {vps.runtime.collector === "missing"
+                        ? "Signaux d’exécution · réinstalle l’agent pour les activer"
+                        : vps.runtime.collector === "silent"
+                          ? "Signaux d’exécution · vérifier luigi-runtime.service"
+                          : `Exécution 24 h · ${vps.runtime.trackedUnits} conteneur${vps.runtime.trackedUnits > 1 ? "s" : ""} et service${vps.runtime.trackedUnits > 1 ? "s" : ""}`}
+                    </small>
                   </span>
                 </div>
                 {vps.rebootRequired && <p className="vps-action-note"><RefreshCw aria-hidden="true" /> Redémarrage requis après mise à jour. Une tâche de maintenance a été créée.</p>}

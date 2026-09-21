@@ -10,12 +10,25 @@ import {
   incidents,
   observations,
 } from "@/db/schema";
+import {
+  describeResource,
+  extractImageCandidates,
+  resolveAssetUrl,
+  truncateLabel,
+} from "@/lib/content-probe";
 import { createOrRefreshNotification, resolveNotification } from "@/lib/notifications";
 
 const MAX_REDIRECTS = 5;
 const MONITOR_USER_AGENT = "Luigi-Monitoring/0.1";
+const PAGE_ACCEPT = "text/html,application/json;q=0.9,*/*;q=0.8";
+const IMAGE_ACCEPT = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
+const MAX_PAGE_BYTES = 1024 * 1024;
+const MIN_IMAGE_BYTES = 16;
+const CONTENT_INCIDENT_SUFFIX = " : rendu dégradé";
 
 type ObservationStatus = "healthy" | "warning" | "critical";
+
+const statusRank: Record<ObservationStatus, number> = { healthy: 0, warning: 1, critical: 2 };
 
 export type HttpCheckResult = {
   checkId: string;
@@ -81,7 +94,31 @@ async function assertPublicTarget(target: URL) {
   }
 }
 
-async function fetchTarget(initialTarget: string, timeoutSeconds: number) {
+async function readBody(response: Response, maxBytes: number) {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (received < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks, Math.min(received, maxBytes));
+}
+
+type FetchOptions = {
+  accept?: string;
+  /** Nombre maximal d’octets du corps à conserver ; sans valeur, le corps est ignoré. */
+  readBytes?: number;
+};
+
+async function fetchTarget(initialTarget: string, timeoutSeconds: number, options: FetchOptions = {}) {
   let target = new URL(initialTarget);
   const startedAt = performance.now();
 
@@ -89,7 +126,7 @@ async function fetchTarget(initialTarget: string, timeoutSeconds: number) {
     await assertPublicTarget(target);
     const response = await fetch(target, {
       method: "GET",
-      headers: { "User-Agent": MONITOR_USER_AGENT, Accept: "text/html,application/json;q=0.9,*/*;q=0.8" },
+      headers: { "User-Agent": MONITOR_USER_AGENT, Accept: options.accept ?? PAGE_ACCEPT },
       redirect: "manual",
       cache: "no-store",
       signal: AbortSignal.timeout(Math.max(1, timeoutSeconds) * 1000),
@@ -106,10 +143,20 @@ async function fetchTarget(initialTarget: string, timeoutSeconds: number) {
       continue;
     }
 
-    await response.body?.cancel();
+    const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
+    let body: Buffer | undefined;
+    if (options.readBytes) {
+      body = await readBody(response, options.readBytes);
+    } else {
+      await response.body?.cancel();
+    }
     return {
       statusCode: response.status,
-      latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      latencyMs,
+      url: target.toString(),
+      contentType: response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() ?? "",
+      cacheStatus: response.headers.get("x-nextjs-cache")?.trim().toUpperCase(),
+      body,
     };
   }
 
@@ -123,6 +170,74 @@ function safeFailureDetail(error: unknown) {
   return "La cible n’a pas pu être jointe.";
 }
 
+type RenderingCheck = {
+  expectedText: string | null;
+  assetProbe: boolean;
+  assetUrl: string | null;
+  timeoutSeconds: number;
+  latencyWarningMs: number;
+};
+
+type RenderingResult = { status: ObservationStatus; summary: string };
+
+function assetFailureSummary(error: unknown, resource: string) {
+  if (error instanceof MonitorTargetError) return `image non vérifiable (${resource}) · ${error.reason}`;
+  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+    return `l’image n’a pas répondu dans le délai (${resource})`;
+  }
+  return `image injoignable (${resource})`;
+}
+
+/**
+ * Vérifie ce que voit réellement le visiteur : une page peut répondre HTTP 200
+ * alors que ses images, servies par un processus Node saturé, ne se chargent plus.
+ */
+async function inspectRendering(check: RenderingCheck, page: { url: string; body?: Buffer }): Promise<RenderingResult> {
+  const html = new TextDecoder("utf-8").decode(page.body ?? Buffer.alloc(0));
+  const verified: string[] = [];
+
+  if (check.expectedText) {
+    if (!html.includes(check.expectedText)) {
+      return { status: "critical", summary: `texte attendu absent : « ${truncateLabel(check.expectedText, 60)} »` };
+    }
+    verified.push("texte attendu présent");
+  }
+  if (!check.assetProbe) return { status: "healthy", summary: verified.join(" · ") };
+
+  const assetTarget = check.assetUrl
+    ? resolveAssetUrl(check.assetUrl, page.url)
+    : extractImageCandidates(html, page.url)[0];
+  if (!assetTarget) {
+    return {
+      status: "critical",
+      summary: check.assetUrl ? "l’URL de l’image à vérifier est invalide" : "aucune image trouvée dans la page",
+    };
+  }
+
+  const resource = describeResource(assetTarget);
+  try {
+    const asset = await fetchTarget(assetTarget, check.timeoutSeconds, { accept: IMAGE_ACCEPT, readBytes: MIN_IMAGE_BYTES });
+    if (asset.statusCode < 200 || asset.statusCode >= 300) {
+      return { status: "critical", summary: `image en erreur HTTP ${asset.statusCode} (${resource})` };
+    }
+    if (!asset.contentType.startsWith("image/")) {
+      return { status: "critical", summary: `l’image renvoie ${asset.contentType || "un type inconnu"} (${resource})` };
+    }
+    const receivedBytes = asset.body?.byteLength ?? 0;
+    if (receivedBytes < MIN_IMAGE_BYTES) {
+      return { status: "critical", summary: `image vide (${receivedBytes} octet${receivedBytes > 1 ? "s" : ""}, ${resource})` };
+    }
+    const cache = asset.cacheStatus ? ` · cache ${asset.cacheStatus}` : "";
+    if (asset.latencyMs >= check.latencyWarningMs) {
+      return { status: "warning", summary: [...verified, `image lente (${asset.latencyMs} ms, ${resource})${cache}`].join(" · ") };
+    }
+    verified.push(`image servie en ${asset.latencyMs} ms${cache}`);
+    return { status: "healthy", summary: verified.join(" · ") };
+  } catch (error) {
+    return { status: "critical", summary: assetFailureSummary(error, resource) };
+  }
+}
+
 export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
   const [configuration] = await db
     .select({
@@ -134,6 +249,9 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
       timeoutSeconds: checks.timeoutSeconds,
       failureThreshold: checks.failureThreshold,
       latencyWarningMs: checks.latencyWarningMs,
+      expectedText: checks.expectedText,
+      assetProbe: checks.assetProbe,
+      assetUrl: checks.assetUrl,
     })
     .from(checks)
     .innerJoin(applications, eq(applications.id, checks.applicationId))
@@ -151,10 +269,16 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
   let statusCode: number | undefined;
   let latencyMs = 0;
   let detail = "La cible n’a pas pu être jointe.";
+  let failureKind: "availability" | "rendering" = "availability";
+  const inspectsRendering = Boolean(configuration.expectedText) || configuration.assetProbe;
 
   const startedAt = performance.now();
   try {
-    const response = await fetchTarget(configuration.target, configuration.timeoutSeconds);
+    const response = await fetchTarget(
+      configuration.target,
+      configuration.timeoutSeconds,
+      inspectsRendering ? { readBytes: MAX_PAGE_BYTES } : {},
+    );
     statusCode = response.statusCode;
     latencyMs = response.latencyMs;
     if (statusCode >= 200 && statusCode < 400) {
@@ -162,6 +286,12 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
       detail = status === "warning"
         ? `HTTP ${statusCode} · réponse lente (${latencyMs} ms)`
         : `HTTP ${statusCode}`;
+      if (inspectsRendering) {
+        const rendering = await inspectRendering(configuration, response);
+        if (rendering.summary) detail = `${detail} · ${rendering.summary}`;
+        if (statusRank[rendering.status] > statusRank[status]) status = rendering.status;
+        if (rendering.status === "critical") failureKind = "rendering";
+      }
     } else {
       detail = `HTTP ${statusCode}`;
     }
@@ -174,6 +304,7 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
   let incidentResolved = false;
   let openedIncidentId: string | undefined;
   let resolvedIncidentId: string | undefined;
+  let resolvedRenderingIncident = false;
   const observedAt = new Date();
 
   await db.transaction(async (transaction) => {
@@ -195,7 +326,7 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
     const thresholdReached = recent.length >= configuration.failureThreshold
       && recent.every((observation) => observation.status === "critical");
     const [openIncident] = await transaction
-      .select({ id: incidents.id })
+      .select({ id: incidents.id, title: incidents.title })
       .from(incidents)
       .where(and(
         eq(incidents.checkId, configuration.checkId),
@@ -208,7 +339,9 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
         applicationId: configuration.applicationId,
         checkId: configuration.checkId,
         status: "open",
-        title: `${configuration.applicationName} ne répond plus`,
+        title: failureKind === "rendering"
+          ? `${configuration.applicationName}${CONTENT_INCIDENT_SUFFIX}`
+          : `${configuration.applicationName} ne répond plus`,
         startedAt: observedAt,
       }).returning({ id: incidents.id });
       openedIncidentId = incident.id;
@@ -221,6 +354,7 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
         .set({ status: "resolved", resolvedAt: observedAt, updatedAt: observedAt })
         .where(eq(incidents.id, openIncident.id));
       resolvedIncidentId = openIncident.id;
+      resolvedRenderingIncident = openIncident.title.endsWith(CONTENT_INCIDENT_SUFFIX);
       incidentResolved = true;
     }
 
@@ -238,8 +372,12 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
   if (openedIncidentId) {
     await createOrRefreshNotification({
       workspaceId: configuration.workspaceId,
-      title: `${configuration.applicationName} est indisponible`,
-      body: `${configuration.failureThreshold} contrôles ont échoué consécutivement. Dernier résultat : ${detail}`,
+      title: failureKind === "rendering"
+        ? `${configuration.applicationName} affiche un rendu dégradé`
+        : `${configuration.applicationName} est indisponible`,
+      body: failureKind === "rendering"
+        ? `La page répond, mais ${configuration.failureThreshold} contrôles consécutifs signalent un rendu incomplet. Dernier résultat : ${detail}`
+        : `${configuration.failureThreshold} contrôles ont échoué consécutivement. Dernier résultat : ${detail}`,
       severity: "critical",
       targetUrl: `/#application-${configuration.applicationId}`,
       fingerprint: `availability:incident:${openedIncidentId}`,
@@ -247,8 +385,12 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
   }
   if (resolvedIncidentId) {
     await resolveNotification(configuration.workspaceId, `availability:incident:${resolvedIncidentId}`, {
-      title: `${configuration.applicationName} répond à nouveau`,
-      body: `${detail} en ${latencyMs} ms. L’incident a été résolu automatiquement.`,
+      title: resolvedRenderingIncident
+        ? `${configuration.applicationName} s’affiche à nouveau correctement`
+        : `${configuration.applicationName} répond à nouveau`,
+      body: inspectsRendering
+        ? `${detail} · page servie en ${latencyMs} ms. L’incident a été résolu automatiquement.`
+        : `${detail} en ${latencyMs} ms. L’incident a été résolu automatiquement.`,
       targetUrl: `/#application-${configuration.applicationId}`,
     });
   }

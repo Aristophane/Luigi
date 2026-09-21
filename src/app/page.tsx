@@ -77,12 +77,29 @@ export default async function Home() {
       .selectDistinctOn([checks.applicationId], {
         applicationId: checks.applicationId,
         latencyMs: observations.latencyMs,
+        status: observations.status,
+        detail: observations.detail,
         observedAt: observations.observedAt,
       })
       .from(observations)
       .innerJoin(checks, eq(checks.id, observations.checkId))
       .where(inArray(checks.applicationId, applicationIds))
       .orderBy(checks.applicationId, desc(observations.observedAt))
+    : [];
+  const httpChecks = applicationIds.length > 0
+    ? await db
+      .select({
+        applicationId: checks.applicationId,
+        expectedText: checks.expectedText,
+        assetProbe: checks.assetProbe,
+        assetUrl: checks.assetUrl,
+      })
+      .from(checks)
+      .where(and(
+        inArray(checks.applicationId, applicationIds),
+        eq(checks.kind, "http"),
+        eq(checks.enabled, true),
+      ))
     : [];
   const [githubIntegration] = await db
     .select({ label: integrations.label })
@@ -183,6 +200,7 @@ export default async function Home() {
   const applications: MonitoredApplication[] = persistedApplications.map((application) => {
     const uptime = uptimeMetrics.find((metric) => metric.applicationId === application.id);
     const latest = latestObservations.find((observation) => observation.applicationId === application.id);
+    const httpCheck = httpChecks.find((check) => check.applicationId === application.id);
     const productionDeployment = latestDeployments.find((deployment) => deployment.applicationId === application.id);
     return {
       id: application.id,
@@ -198,9 +216,16 @@ export default async function Home() {
       lastCheckLabel: latest?.observedAt
         ? latest.observedAt.toLocaleString("fr-FR")
         : "En attente",
+      lastCheckStatus: latest?.status ?? "unknown",
+      lastCheckDetail: latest?.detail ?? undefined,
       lastRepositoryScanLabel: application.lastRepositoryScannedAt
         ? application.lastRepositoryScannedAt.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
         : "Jamais analysé",
+      renderingCheck: httpCheck ? {
+        expectedText: httpCheck.expectedText ?? undefined,
+        assetProbe: httpCheck.assetProbe,
+        assetUrl: httpCheck.assetUrl ?? undefined,
+      } : undefined,
       productionDeployment: productionDeployment ? {
         commitSha: productionDeployment.commitSha,
         shortCommit: productionDeployment.commitSha.slice(0, 7),
@@ -371,6 +396,11 @@ export default async function Home() {
   const nextReportAt = latestVpsSample
     ? new Date(latestVpsSample.observedAt.getTime() + refreshIntervalSeconds * 1000)
     : null;
+  const runtime = vpsPayload?.runtime;
+  const runtimeWindowStart = (latestVpsSample?.observedAt.getTime() ?? 0) - 24 * 60 * 60 * 1000;
+  const recentRuntimeEvents = runtime?.collectedAt
+    ? runtime.events.filter((event) => Date.parse(event.occurredAt) >= runtimeWindowStart)
+    : [];
   const vpsOverview: VpsOverview = {
     configured: Boolean(vpsAgent),
     connected: freshnessStatus === "fresh",
@@ -391,6 +421,14 @@ export default async function Home() {
     rebootRequired: vpsPayload?.updates.rebootRequired ?? false,
     ufwActive: vpsPayload?.security.ufwActive ?? null,
     backupStatus: vpsPayload?.backup?.status ?? "unknown",
+    runtime: {
+      collector: !runtime ? "missing" : runtime.collectedAt ? "fresh" : "silent",
+      trackedUnits: runtime?.units.length ?? 0,
+      oomKills24h: recentRuntimeEvents.filter((event) => event.type === "oom_kill").length,
+      restarts24h: recentRuntimeEvents
+        .filter((event) => event.type === "restart")
+        .reduce((total, event) => total + (event.count ?? 1), 0),
+    },
   };
 
   return (

@@ -118,6 +118,10 @@ download "${SERVER}/install/vps/storage-service" "${temporary_directory}/luigi-s
   || fail "impossible de télécharger le service d’inventaire disque."
 download "${SERVER}/install/vps/storage-timer" "${temporary_directory}/luigi-storage.timer" \
   || fail "impossible de télécharger le timer d’inventaire disque."
+download "${SERVER}/install/vps/runtime.py" "${temporary_directory}/luigi_runtime_collector.py" \
+  || fail "impossible de télécharger le collecteur d’exécution."
+download "${SERVER}/install/vps/runtime-service" "${temporary_directory}/luigi-runtime.service" \
+  || fail "impossible de télécharger le service d’exécution."
 
 step 3 "Enrôlement de l’agent"
 if ! enrollment_response="$(enroll "${SERVER}/api/agent/v1/enroll")"; then
@@ -137,6 +141,7 @@ install -d -o root -g root -m 0755 /opt/luigi-agent
 install -d -o luigi-agent -g luigi-agent -m 0700 /var/lib/luigi-agent/state
 install -o root -g root -m 0755 "${temporary_directory}/luigi_agent.py" /opt/luigi-agent/luigi_agent.py
 install -o root -g root -m 0755 "${temporary_directory}/luigi_storage_collector.py" /opt/luigi-agent/luigi_storage_collector.py
+install -o root -g root -m 0755 "${temporary_directory}/luigi_runtime_collector.py" /opt/luigi-agent/luigi_runtime_collector.py
 
 umask 0077
 {
@@ -154,6 +159,7 @@ install -o root -g root -m 0644 "${temporary_directory}/luigi-agent.service" /et
 install -o root -g root -m 0644 "${temporary_directory}/luigi-agent.timer" /etc/systemd/system/luigi-agent.timer
 install -o root -g root -m 0644 "${temporary_directory}/luigi-storage.service" /etc/systemd/system/luigi-storage.service
 install -o root -g root -m 0644 "${temporary_directory}/luigi-storage.timer" /etc/systemd/system/luigi-storage.timer
+install -o root -g root -m 0644 "${temporary_directory}/luigi-runtime.service" /etc/systemd/system/luigi-runtime.service
 systemctl daemon-reload
 systemctl enable --now luigi-agent.timer >/dev/null
 systemctl enable --now luigi-storage.timer >/dev/null

@@ -40,6 +40,13 @@ Authorization: Bearer <MONITOR_CRON_SECRET>
 
 L’endpoint n’exécute que les contrôles arrivés à échéance. Une application passe en vigilance au premier échec ; un incident critique et une notification interne sont créés après trois échecs consécutifs. Le premier succès suivant résout automatiquement l’incident. Les redirections sont contrôlées et les adresses locales ou privées sont refusées afin de limiter les risques SSRF.
 
+Le bloc **Contrôle du rendu** de chaque application ajoute deux vérifications au contrôle HTTP, car une page peut répondre HTTP 200 alors que ses images ne se chargent plus :
+
+- **texte attendu** : chaîne littérale, sensible à la casse, recherchée dans le premier mégaoctet de la page (par exemple `srcset=`) ;
+- **image** : Luigi charge une image de la page, en priorité une URL de l’optimiseur Next.js `/_next/image`, ou l’image indiquée, puis vérifie un statut 2xx, un type `image/*` et un corps non vide. L’en-tête `x-nextjs-cache` est repris dans le détail.
+
+Un échec compte comme un échec du contrôle : au même seuil, Luigi ouvre un incident « rendu dégradé », distinct d’une indisponibilité. « Enregistrer et tester » exécute immédiatement le contrôle. Si le cache de l’optimiseur est chaud, une panne qui ne touche que les nouvelles variantes d’image peut passer inaperçue : les signaux d’exécution du VPS couvrent ce cas.
+
 Le même appel planifie aussi l’analyse des dépendances. Par défaut, chaque dépôt est revérifié toutes les 24 heures, par lots de trois applications afin de ménager GitHub et le registre npm. `DEPENDENCY_SCAN_INTERVAL_HOURS` règle la cadence (de 1 à 168 heures) et `DEPENDENCY_SCAN_BATCH_SIZE` la taille du lot (de 1 à 20). Luigi recherche récursivement les `package.json`, jusqu’à 200 dépendances npm, et associe chaque solution au `package-lock.json` le plus proche. Deux solutions d’un même dépôt peuvent ainsi utiliser et suivre des versions différentes d’une bibliothèque. Une nouvelle version crée une notification et une tâche de maintenance contextualisées par le chemin du manifeste ; une analyse après mise à jour les résout automatiquement.
 
 ## Version actuellement déployée
@@ -94,6 +101,8 @@ L’intégration GitHub peut vérifier un jeton finement paramétré, le chiffre
 Pour un jeton GitHub V1, accorde uniquement l’accès aux dépôts nécessaires avec la permission **Contents: Read-only**. Une GitHub App dédiée remplacera avantageusement ce mécanisme lors de la mise en production.
 
 L’agent Ubuntu 24.04 et Debian peut maintenant être enrôlé depuis `/settings/vps`. Il remonte les métriques de capacité, mises à jour APT, redémarrage requis, état UFW, configuration SSH, services choisis et fraîcheur de sauvegarde. Les constats correspondants créent et résolvent automatiquement les tâches de maintenance sans doublons.
+
+Les signaux d’exécution complètent la mémoire globale du VPS, qui ne voit pas un processus Node saturé dans un conteneur. Pour chaque conteneur ou service suivi, Luigi crée un constat critique après un arrêt par manque de mémoire, un constat élevé ou critique après des redémarrages automatiques, et un constat élevé quand la mémoire reste au-dessus de 85 % de la limite du conteneur sur deux collectes. Les arrêts restent signalés 24 heures. Si le noyau arrête un processus que le collecteur n’a pas pu rattacher, ou si le collecteur ne répond plus, le compteur du noyau déclenche un constat au niveau du VPS. Le constat de limite mémoire ne s’applique qu’aux conteneurs dotés d’une limite dans Coolify.
 
 La gestion opérationnelle relie maintenant les maintenances aux applications, conserve leur historique, permet leur réouverture et archive une application sans effacer ses traces. Le cockpit affiche également la fraîcheur et la cadence des rapports VPS.
 

@@ -38,6 +38,12 @@ export interface DeploymentSummary {
   matchesRepositoryHead: boolean | null;
 }
 
+export interface RenderingCheckSettings {
+  expectedText?: string;
+  assetProbe: boolean;
+  assetUrl?: string;
+}
+
 export interface MonitoredApplication {
   id: string;
   name: string;
@@ -50,7 +56,10 @@ export interface MonitoredApplication {
   uptime30d: number | null;
   latencyMs: number | null;
   lastCheckLabel: string;
+  lastCheckStatus: HealthStatus;
+  lastCheckDetail?: string;
   lastRepositoryScanLabel: string;
+  renderingCheck?: RenderingCheckSettings;
   productionDeployment?: DeploymentSummary;
   technologies: Technology[];
   dependencies: MonitoredDependency[];
@@ -81,6 +90,12 @@ export interface VpsOverview {
   rebootRequired: boolean;
   ufwActive: boolean | null;
   backupStatus: "ok" | "failed" | "unknown";
+  runtime: {
+    collector: "fresh" | "silent" | "missing";
+    trackedUnits: number;
+    oomKills24h: number;
+    restarts24h: number;
+  };
 }
 
 export interface MaintenanceTask {

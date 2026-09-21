@@ -20,7 +20,7 @@ import { inspectNpmDependencies } from "@/lib/dependency-freshness";
 import { scanStoredApplication } from "@/lib/application-scanner";
 import { GitHubApiError } from "@/lib/github";
 import { getGitHubToken } from "@/lib/github-integration";
-import { runWorkspaceHttpChecks } from "@/lib/http-monitor";
+import { runHttpCheck, runWorkspaceHttpChecks } from "@/lib/http-monitor";
 import { scanGitHubTechnologies } from "@/lib/technology-scanner";
 
 export type CreateApplicationState = {
@@ -29,6 +29,11 @@ export type CreateApplicationState = {
 };
 
 export type CreateTaskState = CreateApplicationState;
+
+export type RenderingCheckState = {
+  status: "idle" | "success" | "warning" | "error";
+  message: string;
+};
 
 export async function runMonitoringNow() {
   const { workspaceId } = await requireWorkspace();
@@ -504,4 +509,70 @@ export async function scanApplication(applicationId: string) {
     }
     return { status: "error" as const, message: "L’analyse GitHub a échoué." };
   }
+}
+
+const renderingCheckSchema = z.object({
+  expectedText: z.string().trim().max(200, "Le texte attendu est limité à 200 caractères."),
+  assetProbe: z.boolean(),
+  assetUrl: z.string().trim().max(500, "L’adresse de l’image est limitée à 500 caractères.").refine(
+    (value) => value === "" || value.startsWith("/") || /^https?:\/\//i.test(value),
+    "L’image doit être un chemin commençant par / ou une URL http(s).",
+  ),
+});
+
+export async function updateRenderingCheck(
+  _previousState: RenderingCheckState,
+  formData: FormData,
+): Promise<RenderingCheckState> {
+  const parsedId = z.string().uuid().safeParse(formData.get("applicationId"));
+  if (!parsedId.success) return { status: "error", message: "Application invalide." };
+  const parsed = renderingCheckSchema.safeParse({
+    expectedText: formData.get("expectedText") ?? "",
+    assetProbe: formData.get("assetProbe") === "on",
+    assetUrl: formData.get("assetUrl") ?? "",
+  });
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0]?.message ?? "Réglages invalides." };
+  }
+  const { workspaceId } = await requireWorkspace();
+
+  const [check] = await db
+    .select({ id: checks.id })
+    .from(checks)
+    .innerJoin(applications, eq(applications.id, checks.applicationId))
+    .where(and(
+      eq(checks.applicationId, parsedId.data),
+      eq(checks.kind, "http"),
+      eq(checks.enabled, true),
+      eq(applications.workspaceId, workspaceId),
+      isNull(applications.archivedAt),
+    ))
+    .limit(1);
+  if (!check) return { status: "error", message: "Cette application n’est plus surveillée." };
+
+  await db
+    .update(checks)
+    .set({
+      expectedText: parsed.data.expectedText || null,
+      assetProbe: parsed.data.assetProbe,
+      assetUrl: parsed.data.assetUrl || null,
+      updatedAt: new Date(),
+    })
+    .where(eq(checks.id, check.id));
+
+  let result: Awaited<ReturnType<typeof runHttpCheck>>;
+  try {
+    result = await runHttpCheck(check.id);
+  } catch {
+    revalidatePath("/");
+    return {
+      status: "warning",
+      message: "Réglages enregistrés. Le contrôle immédiat n’a pas pu s’exécuter ; il reprendra au prochain passage du planificateur.",
+    };
+  }
+  revalidatePath("/");
+  return {
+    status: result.status === "healthy" ? "success" : result.status === "warning" ? "warning" : "error",
+    message: `Réglages enregistrés. Résultat du contrôle : ${result.detail}`,
+  };
 }

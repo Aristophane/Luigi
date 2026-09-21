@@ -15,9 +15,11 @@ import urllib.error
 import urllib.request
 import uuid
 
-AGENT_VERSION = "0.3.0"
+AGENT_VERSION = "0.4.0"
 STORAGE_SNAPSHOT = pathlib.Path("/var/lib/luigi-agent/storage.json")
 STORAGE_MARKER = pathlib.Path("/var/lib/luigi-agent/state/last-storage-snapshot")
+RUNTIME_SNAPSHOT = pathlib.Path("/var/lib/luigi-agent/runtime.json")
+RUNTIME_MAX_AGE = dt.timedelta(minutes=15)
 
 
 def read_text(path: str) -> str:
@@ -129,6 +131,32 @@ def service_states() -> list[dict[str, str | bool]]:
     return states
 
 
+def runtime_state() -> dict[str, object]:
+    """Compteur d’arrêts mémoire du noyau, complété par le collecteur d’exécution s’il est à jour."""
+    runtime: dict[str, object] = {
+        "oomKillsSinceBoot": None,
+        "bootId": read_text("/proc/sys/kernel/random/boot_id").strip()[:64] or None,
+        "collectedAt": None,
+        "units": [],
+        "events": [],
+    }
+    for line in read_text("/proc/vmstat").splitlines():
+        key, _, value = line.partition(" ")
+        if key == "oom_kill" and value.strip().isdigit():
+            runtime["oomKillsSinceBoot"] = int(value.strip())
+            break
+    try:
+        snapshot = json.loads(RUNTIME_SNAPSHOT.read_text(encoding="utf-8"))
+        collected_at = dt.datetime.fromisoformat(snapshot["collectedAt"])
+        if dt.datetime.now(dt.timezone.utc) - collected_at <= RUNTIME_MAX_AGE:
+            runtime["collectedAt"] = snapshot["collectedAt"]
+            runtime["units"] = list(snapshot.get("units", []))[:40]
+            runtime["events"] = list(snapshot.get("events", []))[-50:]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return runtime
+
+
 def system_information() -> dict[str, str]:
     values: dict[str, str] = {}
     for raw_line in read_text("/etc/os-release").splitlines():
@@ -166,6 +194,7 @@ def build_report() -> dict[str, object]:
         "updates": package_updates(),
         "security": security_state(),
         "services": service_states(),
+        "runtime": runtime_state(),
     }
     backup = backup_state()
     if backup is not None:

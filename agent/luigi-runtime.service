@@ -1,14 +1,15 @@
 [Unit]
-Description=Collecteur de supervision Luigi
-After=network-online.target luigi-runtime.service
-Wants=network-online.target luigi-runtime.service
+Description=Luigi runtime signals (OOM kills and restarts)
+After=local-fs.target
 
 [Service]
 Type=oneshot
-User=luigi-agent
+User=root
 Group=luigi-agent
 EnvironmentFile=/etc/luigi-agent.env
-ExecStart=/usr/bin/python3 /opt/luigi-agent/luigi_agent.py
+ExecStart=/usr/bin/python3 /opt/luigi-agent/luigi_runtime_collector.py
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+PrivateNetwork=true
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true
@@ -18,14 +19,13 @@ ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/luigi-agent/state
-RestrictAddressFamilies=AF_INET AF_INET6
+ReadWritePaths=/var/lib/luigi-agent
+RestrictAddressFamilies=AF_UNIX
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
-UMask=0077
-
-[Install]
-WantedBy=multi-user.target
+Nice=10
+TimeoutStartSec=60s
+UMask=0027

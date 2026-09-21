@@ -12,6 +12,8 @@ const artifacts = {
   "storage.py": { filename: "luigi_storage_collector.py", contentType: "text/x-python; charset=utf-8" },
   "storage-service": { filename: "luigi-storage.service", contentType: "text/plain; charset=utf-8" },
   "storage-timer": { filename: "luigi-storage.timer", contentType: "text/plain; charset=utf-8" },
+  "runtime.py": { filename: "luigi_runtime_collector.py", contentType: "text/x-python; charset=utf-8" },
+  "runtime-service": { filename: "luigi-runtime.service", contentType: "text/plain; charset=utf-8" },
 } as const;
 
 export async function GET(
