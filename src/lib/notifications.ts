@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { notifications } from "@/db/schema";
+import { sendDiscordAlert } from "@/lib/discord";
 import { sendWebPushToWorkspace } from "@/lib/web-push";
 
 type NotificationSeverity = "critical" | "high" | "medium" | "low";
@@ -55,12 +56,20 @@ export async function createOrRefreshNotification(input: NotificationInput) {
   const shouldPush = input.push ?? (input.severity === "critical" || input.severity === "high");
   const created = notification.occurrenceCount === 1;
   if (created && shouldPush) {
-    await sendWebPushToWorkspace(input.workspaceId, {
-      title: input.title,
-      body: input.body,
-      url: input.targetUrl,
-      tag: input.fingerprint ?? `notification:${notification.id}`,
-    });
+    await Promise.all([
+      sendWebPushToWorkspace(input.workspaceId, {
+        title: input.title,
+        body: input.body,
+        url: input.targetUrl,
+        tag: input.fingerprint ?? `notification:${notification.id}`,
+      }),
+      sendDiscordAlert({
+        title: input.title,
+        body: input.body,
+        severity: input.severity,
+        targetUrl: input.targetUrl,
+      }),
+    ]);
   }
 
   return { id: notification.id, created };

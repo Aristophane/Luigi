@@ -86,6 +86,12 @@ Chaque navigateur est enregistré séparément et peut être testé ou révoqué
 
 `MONITOR_CRON_INTERVAL_SECONDS` doit correspondre à la fréquence réelle d’appel du cron. Luigi compare ce rythme à celui de l’agent VPS pour détecter qu’une source est devenue silencieuse sans générer de doublons.
 
+## Notifications Discord
+
+Discord sert de second canal, indépendant des navigateurs abonnés. Dans le salon choisi, ouvre **Paramètres du salon → Intégrations → Webhooks**, crée un webhook et copie son URL dans `DISCORD_WEBHOOK_URL`, puis redémarre Luigi. Seules les URL HTTPS de `discord.com` sous `/api/webhooks/` sont acceptées.
+
+Luigi y publie les mêmes événements que le Web Push : incidents critiques, alertes élevées, silences de collecte et retours à la normale, avec un lien vers le cockpit construit à partir de `BETTER_AUTH_URL`. Les mentions `@everyone` et `@here` sont neutralisées. Un envoi est limité à cinq secondes et un échec est journalisé sans bloquer l’incident. **Paramètres → Intégrations** indique si le canal est prêt et permet d’envoyer un message de test. Pour être alerté sur mobile, règle les notifications du salon sur « Tous les messages ».
+
 ## Documentation
 
 - [Spécification du module de monitoring](docs/monitoring.md)

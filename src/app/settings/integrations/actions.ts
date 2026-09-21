@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { integrations } from "@/db/schema";
 import { requireWorkspace } from "@/lib/dal";
+import { isDiscordConfigured, sendDiscordAlert } from "@/lib/discord";
 import { GitHubApiError, verifyGitHubToken } from "@/lib/github";
 import { encryptSecret } from "@/lib/secret-box";
 
@@ -80,4 +81,22 @@ export async function connectGitHub(
   revalidatePath("/settings/integrations");
   revalidatePath("/");
   return { status: "success", message: "GitHub est connecté en lecture seule." };
+}
+
+export async function sendDiscordTest(): Promise<IntegrationActionState> {
+  await requireWorkspace();
+  if (!isDiscordConfigured()) {
+    return { status: "error", message: "DISCORD_WEBHOOK_URL est absent ou ne désigne pas un webhook Discord." };
+  }
+  const result = await sendDiscordAlert({
+    title: "Luigi veille",
+    body: "Les alertes critiques et élevées, les silences de collecte et les retours à la normale seront publiés dans ce salon.",
+    severity: "low",
+    targetUrl: "/#overview",
+  });
+  if (result.delivered) return { status: "success", message: "Message de test publié dans Discord." };
+  if ("status" in result && (result.status === 401 || result.status === 404)) {
+    return { status: "error", message: "Discord ne reconnaît pas ce webhook : il a peut-être été supprimé ou régénéré." };
+  }
+  return { status: "error", message: "Discord n’a pas accepté le message. Réessaie dans quelques instants." };
 }
