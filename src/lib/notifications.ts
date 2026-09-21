@@ -78,7 +78,8 @@ export async function createOrRefreshNotification(input: NotificationInput) {
 export async function resolveNotification(
   workspaceId: string,
   fingerprint: string,
-  recovery: { title: string; body: string; targetUrl: string },
+  // Sans message de retour à la normale, la notification est simplement close (ex. remplacée par une autre).
+  recovery?: { title: string; body: string; targetUrl: string },
 ) {
   const [active] = await db
     .select({ id: notifications.id })
@@ -96,6 +97,7 @@ export async function resolveNotification(
     .update(notifications)
     .set({ resolvedAt, updatedAt: resolvedAt })
     .where(eq(notifications.id, active.id));
+  if (!recovery) return { resolved: true };
   await createOrRefreshNotification({
     workspaceId,
     ...recovery,

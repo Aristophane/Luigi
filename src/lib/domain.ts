@@ -13,18 +13,23 @@ export type TechnologySource = "detected" | "declared" | "confirmed" | "ignored"
 export interface Technology {
   name: string;
   version?: string;
+  // Renseignée lorsque le paquet principal de la technologie a une mise à jour disponible.
+  latestVersion?: string;
   source: TechnologySource;
   evidence?: string;
 }
 
 export interface MonitoredDependency {
+  // Nom du paquet, ou de la famille lorsque plusieurs paquets publiés ensemble sont regroupés.
   name: string;
+  packages?: string[];
   ecosystem: string;
   manifestPath: string;
   currentVersion?: string;
   requestedRange: string;
   latestVersion?: string;
   status: "current" | "outdated" | "unknown" | "unsupported";
+  updateKind?: "major" | "compatible";
   development: boolean;
   evidence: string;
 }

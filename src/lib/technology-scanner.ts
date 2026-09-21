@@ -1,3 +1,4 @@
+import { frameworkPackages } from "@/lib/dependency-groups";
 import { getGitHubFile, inspectGitHubRepository } from "@/lib/github";
 
 export type DetectedTechnology = {
@@ -49,24 +50,13 @@ function packageJsonDetections(content: string, evidence: string) {
     devDependencies?: Record<string, string>;
   };
   const dependencies = { ...manifest.devDependencies, ...manifest.dependencies };
-  const knownPackages: Record<string, string> = {
-    "@vendure/core": "Vendure",
-    next: "Next.js",
-    react: "React",
-    vue: "Vue",
-    nuxt: "Nuxt",
-    express: "Express",
-    "@nestjs/core": "NestJS",
-    svelte: "Svelte",
-    astro: "Astro",
-  };
 
   if (manifest.engines?.node) detections.push({ name: "Node.js", version: cleanVersion(manifest.engines.node), evidence });
   if (manifest.packageManager) {
     const [manager, version] = manifest.packageManager.split("@");
     detections.push({ name: manager, version, evidence });
   }
-  for (const [packageName, technologyName] of Object.entries(knownPackages)) {
+  for (const [packageName, technologyName] of Object.entries(frameworkPackages)) {
     if (dependencies[packageName]) detections.push({
       name: technologyName,
       version: cleanVersion(dependencies[packageName]),

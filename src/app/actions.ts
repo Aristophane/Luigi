@@ -9,7 +9,6 @@ import {
   applications,
   checks,
   dependencies,
-  findings,
   maintenanceTaskEvents,
   maintenanceTasks,
   notifications,
@@ -17,7 +16,7 @@ import {
 } from "@/db/schema";
 import { requireWorkspace } from "@/lib/dal";
 import { inspectNpmDependencies } from "@/lib/dependency-freshness";
-import { scanStoredApplication } from "@/lib/application-scanner";
+import { scanStoredApplication, syncDependencyFindings } from "@/lib/application-scanner";
 import { GitHubApiError } from "@/lib/github";
 import { getGitHubToken } from "@/lib/github-integration";
 import { runHttpCheck, runWorkspaceHttpChecks } from "@/lib/http-monitor";
@@ -196,60 +195,15 @@ export async function createApplication(
         })));
       }
 
-      for (const dependency of dependencyFreshness.filter((item) => item.status === "outdated")) {
-        const severity = dependency.updateKind === "major" ? "medium" : "low";
-        const dependencyLocation = dependency.manifestPath === "package.json" ? "" : ` · ${dependency.manifestPath}`;
-        const fingerprintLocation = dependency.manifestPath === "package.json"
-          ? ""
-          : `:${encodeURIComponent(dependency.manifestPath)}`;
-        const findingTitle = dependency.currentVersion
-          ? `${dependency.name} ${dependency.currentVersion} n’est plus à jour${dependencyLocation}`
-          : `${dependency.name} ne permet pas la dernière version${dependencyLocation}`;
-        const findingDescription = dependency.currentVersion
-          ? `Le dépôt verrouille la version ${dependency.currentVersion}. La version ${dependency.latestVersion} est disponible.`
-          : `La contrainte ${dependency.requestedRange} n’accepte pas la version ${dependency.latestVersion}.`;
-        const [finding] = await transaction.insert(findings).values({
-          workspaceId,
-          applicationId: application.id,
-          kind: "dependency",
-          severity,
-          title: findingTitle,
-          description: findingDescription,
-          fingerprint: `application:${application.id}:dependency:npm${fingerprintLocation}:${dependency.name}:outdated`,
-          metadata: {
-            ecosystem: dependency.ecosystem,
-            package: dependency.name,
-            manifestPath: dependency.manifestPath,
-            currentVersion: dependency.currentVersion,
-            requestedRange: dependency.requestedRange,
-            latestVersion: dependency.latestVersion,
-            updateKind: dependency.updateKind,
-          },
-        }).returning({ id: findings.id });
-
-        const dueAt = new Date();
-        dueAt.setDate(dueAt.getDate() + (dependency.updateKind === "major" ? 14 : 30));
-        const [task] = await transaction.insert(maintenanceTasks).values({
-          workspaceId,
-          applicationId: application.id,
-          findingId: finding.id,
-          title: `Mettre à jour ${dependency.name} vers ${dependency.latestVersion}${dependencyLocation}`,
-          description: dependency.currentVersion
-            ? `Mettre à jour la version verrouillée ${dependency.currentVersion}, vérifier le changelog et exécuter les tests.`
-            : `Adapter la contrainte ${dependency.requestedRange}, vérifier le changelog et exécuter les tests.`,
-          category: "dependency",
-          severity,
-          automatic: true,
-          dueAt,
-        }).returning({ id: maintenanceTasks.id });
-        await transaction.insert(maintenanceTaskEvents).values({
-          workspaceId,
-          taskId: task.id,
-          action: "created",
-          nextStatus: "open",
-          note: "Tâche créée automatiquement par l’analyse des dépendances.",
-        });
-      }
+      await syncDependencyFindings(transaction, {
+        workspaceId,
+        applicationId: application.id,
+        freshness: dependencyFreshness,
+        declaredDependencies: scan.dependencies,
+        existingFindings: [],
+        openNotificationFingerprints: new Set(),
+        checkedAt: new Date(),
+      });
     });
   } catch (error) {
     if (typeof error === "object" && error && "code" in error && error.code === "23505") {

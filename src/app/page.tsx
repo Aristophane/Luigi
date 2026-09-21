@@ -14,6 +14,7 @@ import {
   vpsMetricSamples,
 } from "@/db/schema";
 import { requireWorkspace } from "@/lib/dal";
+import { compareDependencyGroups, groupDependencies, technologyDependency } from "@/lib/dependency-groups";
 import type { ActivityEvent, DashboardNotification, HealthStatus, MaintenanceTask, MonitoredApplication, ServerMetric, VpsOverview } from "@/lib/domain";
 import { vpsReportSchema } from "@/lib/vps-report";
 
@@ -203,6 +204,7 @@ export default async function Home() {
     const latest = latestObservations.find((observation) => observation.applicationId === application.id);
     const httpCheck = httpChecks.find((check) => check.applicationId === application.id);
     const productionDeployment = latestDeployments.find((deployment) => deployment.applicationId === application.id);
+    const applicationDependencies = persistedDependencies.filter((dependency) => dependency.applicationId === application.id);
     return {
       id: application.id,
       name: application.name,
@@ -246,27 +248,31 @@ export default async function Home() {
       } : undefined,
       technologies: persistedTechnologies
         .filter((technology) => technology.applicationId === application.id)
-        .map((technology) => ({
-          name: technology.name,
-          version: technology.version ?? undefined,
-          source: technology.source as "detected" | "declared" | "confirmed" | "ignored",
-          evidence: technology.evidence ?? undefined,
-        })),
-      dependencies: persistedDependencies
-        .filter((dependency) => dependency.applicationId === application.id)
-        .sort((left, right) => Number(right.status === "outdated") - Number(left.status === "outdated")
-          || left.manifestPath.localeCompare(right.manifestPath)
-          || left.name.localeCompare(right.name))
-        .map((dependency) => ({
-          name: dependency.name,
-          ecosystem: dependency.ecosystem,
-          manifestPath: dependency.manifestPath,
-          currentVersion: dependency.currentVersion ?? undefined,
-          requestedRange: dependency.requestedRange,
-          latestVersion: dependency.latestVersion ?? undefined,
-          status: dependency.status,
-          development: dependency.development,
-          evidence: dependency.evidence,
+        .map((technology) => {
+          const dependency = technologyDependency(technology, applicationDependencies);
+          return {
+            name: technology.name,
+            version: dependency?.currentVersion ?? technology.version ?? undefined,
+            latestVersion: dependency?.status === "outdated" ? dependency.latestVersion ?? undefined : undefined,
+            source: technology.source as "detected" | "declared" | "confirmed" | "ignored",
+            evidence: technology.evidence ?? undefined,
+          };
+        })
+        .sort((left, right) => Number(Boolean(right.latestVersion)) - Number(Boolean(left.latestVersion))),
+      dependencies: groupDependencies(applicationDependencies)
+        .sort(compareDependencyGroups)
+        .map((group) => ({
+          name: group.label,
+          packages: group.members.map((member) => member.name),
+          ecosystem: group.lead.ecosystem,
+          manifestPath: group.manifestPath,
+          currentVersion: group.currentVersion,
+          requestedRange: group.lead.requestedRange,
+          latestVersion: group.latestVersion,
+          status: group.status,
+          updateKind: group.updateKind,
+          development: group.development,
+          evidence: group.lead.evidence,
         })),
     };
   });

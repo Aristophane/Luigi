@@ -586,7 +586,12 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
 
                     <div className="application-route__footer">
                       <div className="technology-list" aria-label={`Technologies de ${application.name}`}>
-                        {application.technologies.slice(0, 3).map((technology) => (
+                        {application.technologies.slice(0, 3).map((technology) => technology.latestVersion ? (
+                          <span className="technology-list__update" key={technology.name} title={`Version ${technology.latestVersion} disponible`}>
+                            {technology.name} {technology.version} → {technology.latestVersion}
+                            <span className="sr-only"> : mise à jour disponible</span>
+                          </span>
+                        ) : (
                           <span key={technology.name}>{technology.name} {technology.version}</span>
                         ))}
                       </div>
@@ -618,10 +623,13 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                               <span>Bibliothèque</span><span>Version utilisée</span><span>Dernière</span><span>État</span>
                             </div>
                             {application.dependencies.map((dependency) => (
-                              <div className="dependency-table__row" key={`${dependency.ecosystem}:${dependency.name}`}>
+                              <div className="dependency-table__row" key={`${dependency.ecosystem}:${dependency.manifestPath}:${dependency.name}`}>
                                 <span className="dependency-table__name">
                                   <strong>{dependency.name}</strong>
-                                  <small>{dependency.manifestPath}{dependency.development ? " · développement" : ""}</small>
+                                  <small title={dependency.packages && dependency.packages.length > 1 ? dependency.packages.join(", ") : undefined}>
+                                    {dependency.packages && dependency.packages.length > 1 ? `${dependency.packages.length} paquets · ` : ""}
+                                    {dependency.manifestPath}{dependency.development ? " · développement" : ""}
+                                  </small>
                                 </span>
                                 <span data-label="Version utilisée">{dependency.currentVersion ?? dependency.requestedRange}</span>
                                 <span data-label="Dernière">{dependency.latestVersion ?? "Indisponible"}</span>

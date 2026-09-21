@@ -1114,7 +1114,7 @@ h3 {
   padding-top: var(--space-3);
 }
 
-.technology-list span,
+.technology-list > span,
 .severity,
 .section-count,
 .dialog-step {
@@ -1129,6 +1129,11 @@ h3 {
   font-size: 0.66rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.technology-list > .technology-list__update {
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .dependency-watch {
