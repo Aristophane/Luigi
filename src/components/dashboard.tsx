@@ -48,6 +48,7 @@ import {
 import { signOut } from "@/app/(auth)/actions";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
 import { StatusDot } from "@/components/status-dot";
+import { ApplicationIcon } from "@/components/application-icon";
 import { RenderingCheckPanel } from "@/components/rendering-check-panel";
 import { ScanApplicationButton } from "@/components/scan-application-button";
 import { LocalDateTime } from "@/components/local-date-time";
@@ -522,7 +523,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                       <div className="application-route__identity">
                         <StatusDot status={application.status} />
                         <div>
-                          <h3>{application.name}</h3>
+                          <h3><ApplicationIcon name={application.name} url={application.url} /><span>{application.name}</span></h3>
                           <a href={application.url} target="_blank" rel="noreferrer">{application.url}</a>
                         </div>
                       </div>

@@ -864,9 +864,30 @@ h3 {
 }
 
 .application-route__identity h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: 1.1rem;
   letter-spacing: -0.02em;
 }
+
+.application-route__identity h3 > span:last-child { min-width: 0; }
+
+.application-icon {
+  display: inline-grid;
+  flex: 0 0 1.25rem;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  overflow: hidden;
+  border-radius: var(--space-1);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: .75rem;
+  line-height: 1;
+}
+
+.application-icon img { display: block; object-fit: contain; }
 
 .application-route__identity a,
 .task-row p {
