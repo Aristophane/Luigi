@@ -370,7 +370,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
       <ServiceWorkerRegistration />
       <a className="skip-link" href="#main-content">Aller au contenu</a>
 
-      <div className="app-shell">
+      <div className="app-shell dashboard-shell">
         <aside className="sidebar" aria-label="Navigation principale">
           <a className="brand" href="#overview" aria-label="Luigi, vue générale">
             <span className="brand__mark" aria-hidden="true"><TrainFront /></span>
@@ -476,98 +476,11 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
           </section>
 
           {monitoringReady === false && <p className="collection-warning" role="status">Supervision indisponible ou en retard. Les données affichées peuvent être périmées. <Link href="/settings/integrations#delivery-log">Voir le suivi</Link></p>}
-          <div className="vps-overview" id="vps">
-          {(vpsServers.length ? vpsServers : [vps]).map((vps) => <section key={vps.serverId ?? "empty"} className="section vps-section" aria-label={vps.hostname ?? "VPS"}>
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Ubuntu 24.04</p>
-                <h2>{vps.hostname ?? "VPS à relier"}</h2>
-              </div>
-              <div className="section-heading__actions">
-                <StatusDot status={vps.status} />
-                <Link className="text-link" href="/storage"><HardDrive aria-hidden="true" /> Espace disque</Link>
-                <Link className="text-link" href="/settings/vps">Configurer</Link>
-              </div>
-            </div>
-
-            {vps.metrics.length > 0 ? <div className="metric-list">
-              {vps.metrics.map((metric) => (
-                <div className="metric-row" key={metric.id}>
-                  <div className="metric-row__heading">
-                    <span>{metric.label}</span>
-                    <strong>{metric.displayValue}</strong>
-                  </div>
-                  <div className="meter" role="meter" aria-label={metric.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}>
-                    <span className={`meter__value meter__value--${metric.status}`} style={{ transform: `scaleX(${metric.value / 100})` }} />
-                  </div>
-                  <small>{metric.detail}</small>
-                </div>
-              ))}
-            </div> : (
-              <div className="empty-state vps-empty-state">
-                <Server aria-hidden="true" />
-                <strong>{vps.configured ? "En attente du premier rapport." : "Le VPS n’est pas encore relié."}</strong>
-                <span>{vps.configured ? "Démarre le service sur Ubuntu pour remplacer cette zone par les mesures réelles." : "Crée un jeton puis installe l’agent en quelques commandes."}</span>
-                <Link className="button button--secondary" href="/settings/vps">{vps.configured ? "Voir l’installation" : "Relier le VPS"}</Link>
-              </div>
-            )}
-
-            {vps.metrics.length > 0 && <>
-              <div className={`vps-freshness vps-freshness--${vps.freshnessStatus}`}>
-                <span><strong>Collecte</strong><small>{vps.refreshIntervalLabel}</small></span>
-                <span><strong>Dernière donnée</strong><small>{vps.dataAgeLabel}</small></span>
-                <span><strong>Prochaine attendue</strong><small>{vps.nextReportAt ? <>Vers <LocalDateTime value={vps.nextReportAt} format="time" /></> : vps.nextReportLabel}</small></span>
-              </div>
-              <p className="collection-coverage">
-                Collecte {({ complete: "complète", partial: "partielle", absent: "absente", stale: "obsolète" })[vps.runtime.completeness ?? "absent"]}
-                {vps.runtime.completeness === "partial" && " · " + (vps.runtime.omittedUnits ?? 0) + " unités et " + (vps.runtime.omittedEvents ?? 0) + " événements omis (au minimum). Les autres données ne sont pas confirmées."}
-              </p>
-              <div className="vps-facts">
-                <span>
-                  <ShieldCheck aria-hidden="true" />
-                  <strong>{vps.securityUpdates === 0 ? "À jour" : `${vps.securityUpdates} à appliquer`}</strong>
-                  <small>Correctifs de sécurité · UFW {vps.ufwActive === null ? "inconnu" : vps.ufwActive ? "actif" : "inactif"}</small>
-                </span>
-                <span>
-                  <HardDrive aria-hidden="true" />
-                  <strong>{vps.backupStatus === "ok" ? "Réussie" : vps.backupStatus === "failed" ? "À vérifier" : "Non configurée"}</strong>
-                  <small>Sauvegarde · <LocalDateTime value={vps.lastSeenAt} fallback="Aucun rapport reçu" /></small>
-                </span>
-                <span className={`vps-fact--${vps.runtime.oomKills24h > 0
-                  ? "critical"
-                  : vps.runtime.restarts24h > 0 || vps.runtime.completeness !== "complete" ? "warning" : "healthy"}`}
-                >
-                  <MemoryStick aria-hidden="true" />
-                  <strong>
-                    {vps.runtime.collector === "missing"
-                      ? "Non activés"
-                      : vps.runtime.collector === "silent"
-                        ? "Collecteur muet"
-                        : vps.runtime.oomKills24h > 0
-                          ? `${vps.runtime.oomKills24h} arrêt${vps.runtime.oomKills24h > 1 ? "s" : ""} mémoire`
-                          : vps.runtime.restarts24h > 0
-                            ? `${vps.runtime.restarts24h} redémarrage${vps.runtime.restarts24h > 1 ? "s" : ""}`
-                            : vps.runtime.completeness === "complete" ? "Aucun arrêt observé" : "Historique incomplet"}
-                  </strong>
-                  <small>
-                    {vps.runtime.collector === "missing"
-                      ? "Signaux d’exécution · réinstalle l’agent pour les activer"
-                      : vps.runtime.collector === "silent"
-                        ? "Signaux d’exécution · vérifier luigi-runtime.service"
-                        : `Exécution 24 h · ${vps.runtime.trackedUnits} conteneur${vps.runtime.trackedUnits > 1 ? "s" : ""} et service${vps.runtime.trackedUnits > 1 ? "s" : ""}`}
-                  </small>
-                </span>
-              </div>
-              {vps.rebootRequired && <p className="vps-action-note"><RefreshCw aria-hidden="true" /> Redémarrage requis après mise à jour. Une tâche de maintenance a été créée.</p>}
-            </>}
-          </section>)}
-          </div>
-
           <section className="section applications-section" id="applications" aria-labelledby="applications-title">
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Flux de livraison</p>
-                  <h2 id="applications-title">Applications en circulation</h2>
+                  <h2 id="applications-title">Applications <span className="section-count">{applications.length}</span></h2>
                 </div>
                 <span className="circulation-key"><GitBranch aria-hidden="true" /> Dépôt <ChevronRight aria-hidden="true" /> Environnement</span>
               </div>
@@ -607,7 +520,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                   <article className={`application-route application-route--${releaseState}`} id={`application-${application.id}`} key={application.id}>
                     <header className="application-route__header">
                       <div className="application-route__identity">
-                        <StatusDot status={application.status} compact />
+                        <StatusDot status={application.status} />
                         <div>
                           <h3>{application.name}</h3>
                           <a href={application.url} target="_blank" rel="noreferrer">{application.url}</a>
@@ -635,6 +548,27 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                       </div>
                     </header>
 
+                    <details className="application-details">
+                      <summary>
+                        <span className={`application-summary__release application-summary__release--${releaseState}`}>{releaseLabel}</span>
+                        <span className={dependencyState !== "current" ? "application-summary__warning" : ""}>
+                          {outdatedDependencies.length > 0 ? `${outdatedDependencies.length} mise(s) à jour` : dependencyState === "current" && application.dependencies.length > 0 ? "Bibliothèques à jour" : application.dependencies.length > 0 ? "Bibliothèques" : "Bibliothèques non détectées"}
+                          {uncertainDependencies.length > 0 && ` · ${uncertainDependencies.length} à vérifier`}
+                          {untrackedDependencies.length > 0 && ` · ${untrackedDependencies.length} non suivie(s)`}
+                        </span>
+                        <span className={application.staleChecks || application.status === "unknown" ? "application-summary__warning" : ""}>
+                          {application.staleChecks ? `${application.staleChecks} contrôle(s) sans mesure récente` : application.status === "unknown" ? "Mesures manquantes" : "Mesures récentes"}
+                        </span>
+                        {application.renderingCheck && <span className={application.lastCheckStatus === "critical" || application.lastCheckStatus === "warning" ? "application-summary__warning" : ""}>
+                          Rendu : {!(application.renderingCheck.renderingUrl || application.renderingCheck.expectedText || application.renderingCheck.assetProbe)
+                            ? "non configuré"
+                            : application.lastCheckStatus === "healthy" ? "vérifié"
+                              : application.lastCheckStatus === "critical" ? "en échec"
+                                : application.lastCheckStatus === "warning" ? "à surveiller" : "en attente"}
+                        </span>}
+                        <span className="application-summary__toggle">Détails <span className="sr-only">de {application.name}</span><ChevronRight aria-hidden="true" /></span>
+                      </summary>
+                    <div className="application-details__body">
                     <div className="collection-coverage" role="note">
                       <span>{application.staleChecks ? application.staleChecks + " contrôle(s) essentiel(s) sans mesure récente · état incomplet" : application.status === "unknown" ? "Mesures essentielles manquantes" : "Mesures récentes"}</span>
                       <span>{application.collectionGaps ?? 0} interruption(s) · {application.missingMinutes ?? 0} min sans mesure</span>
@@ -751,6 +685,8 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                       </div>
                     </details>
                     <RenderingCheckPanel application={application} />
+                    </div>
+                    </details>
                   </article>
                   );
                 })}
@@ -766,6 +702,93 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                 )}
               </div>
             </section>
+
+          <div className="vps-overview" id="vps">
+          {(vpsServers.length ? vpsServers : [vps]).map((vps) => <section key={vps.serverId ?? "empty"} className="section vps-section" aria-label={vps.hostname ?? "VPS"}>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Ubuntu 24.04</p>
+                <h2>{vps.hostname ?? "VPS à relier"}</h2>
+              </div>
+              <div className="section-heading__actions">
+                <StatusDot status={vps.status} />
+                <Link className="text-link" href="/storage"><HardDrive aria-hidden="true" /> Espace disque</Link>
+                <Link className="text-link" href="/settings/vps">Configurer</Link>
+              </div>
+            </div>
+
+            {vps.metrics.length > 0 ? <div className="metric-list">
+              {vps.metrics.map((metric) => (
+                <div className="metric-row" key={metric.id}>
+                  <div className="metric-row__heading">
+                    <span>{metric.label}</span>
+                    <strong>{metric.displayValue}</strong>
+                  </div>
+                  <div className="meter" role="meter" aria-label={metric.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}>
+                    <span className={`meter__value meter__value--${metric.status}`} style={{ transform: `scaleX(${metric.value / 100})` }} />
+                  </div>
+                  <small>{metric.detail}</small>
+                </div>
+              ))}
+            </div> : (
+              <div className="empty-state vps-empty-state">
+                <Server aria-hidden="true" />
+                <strong>{vps.configured ? "En attente du premier rapport." : "Le VPS n’est pas encore relié."}</strong>
+                <span>{vps.configured ? "Démarre le service sur Ubuntu pour remplacer cette zone par les mesures réelles." : "Crée un jeton puis installe l’agent en quelques commandes."}</span>
+                <Link className="button button--secondary" href="/settings/vps">{vps.configured ? "Voir l’installation" : "Relier le VPS"}</Link>
+              </div>
+            )}
+
+            {vps.metrics.length > 0 && <>
+              <div className={`vps-freshness vps-freshness--${vps.freshnessStatus}`}>
+                <span><strong>Collecte</strong><small>{vps.refreshIntervalLabel}</small></span>
+                <span><strong>Dernière donnée</strong><small>{vps.dataAgeLabel}</small></span>
+                <span><strong>Prochaine attendue</strong><small>{vps.nextReportAt ? <>Vers <LocalDateTime value={vps.nextReportAt} format="time" /></> : vps.nextReportLabel}</small></span>
+              </div>
+              <p className="collection-coverage">
+                Collecte {({ complete: "complète", partial: "partielle", absent: "absente", stale: "obsolète" })[vps.runtime.completeness ?? "absent"]}
+                {vps.runtime.completeness === "partial" && " · " + (vps.runtime.omittedUnits ?? 0) + " unités et " + (vps.runtime.omittedEvents ?? 0) + " événements omis (au minimum). Les autres données ne sont pas confirmées."}
+              </p>
+              <div className="vps-facts">
+                <span>
+                  <ShieldCheck aria-hidden="true" />
+                  <strong>{vps.securityUpdates === 0 ? "À jour" : `${vps.securityUpdates} à appliquer`}</strong>
+                  <small>Correctifs de sécurité · UFW {vps.ufwActive === null ? "inconnu" : vps.ufwActive ? "actif" : "inactif"}</small>
+                </span>
+                <span>
+                  <HardDrive aria-hidden="true" />
+                  <strong>{vps.backupStatus === "ok" ? "Réussie" : vps.backupStatus === "failed" ? "À vérifier" : "Non configurée"}</strong>
+                  <small>Sauvegarde · <LocalDateTime value={vps.lastSeenAt} fallback="Aucun rapport reçu" /></small>
+                </span>
+                <span className={`vps-fact--${vps.runtime.oomKills24h > 0
+                  ? "critical"
+                  : vps.runtime.restarts24h > 0 || vps.runtime.completeness !== "complete" ? "warning" : "healthy"}`}
+                >
+                  <MemoryStick aria-hidden="true" />
+                  <strong>
+                    {vps.runtime.collector === "missing"
+                      ? "Non activés"
+                      : vps.runtime.collector === "silent"
+                        ? "Collecteur muet"
+                        : vps.runtime.oomKills24h > 0
+                          ? `${vps.runtime.oomKills24h} arrêt${vps.runtime.oomKills24h > 1 ? "s" : ""} mémoire`
+                          : vps.runtime.restarts24h > 0
+                            ? `${vps.runtime.restarts24h} redémarrage${vps.runtime.restarts24h > 1 ? "s" : ""}`
+                            : vps.runtime.completeness === "complete" ? "Aucun arrêt observé" : "Historique incomplet"}
+                  </strong>
+                  <small>
+                    {vps.runtime.collector === "missing"
+                      ? "Signaux d’exécution · réinstalle l’agent pour les activer"
+                      : vps.runtime.collector === "silent"
+                        ? "Signaux d’exécution · vérifier luigi-runtime.service"
+                        : `Exécution 24 h · ${vps.runtime.trackedUnits} conteneur${vps.runtime.trackedUnits > 1 ? "s" : ""} et service${vps.runtime.trackedUnits > 1 ? "s" : ""}`}
+                  </small>
+                </span>
+              </div>
+              {vps.rebootRequired && <p className="vps-action-note"><RefreshCw aria-hidden="true" /> Redémarrage requis après mise à jour. Une tâche de maintenance a été créée.</p>}
+            </>}
+          </section>)}
+          </div>
 
           <div className="dashboard-grid">
 
