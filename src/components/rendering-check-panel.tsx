@@ -1,5 +1,7 @@
 "use client";
 
+import { LocalDateTime } from "@/components/local-date-time";
+
 import { useActionState } from "react";
 import { Check, ChevronRight, ImageOff, ScanEye } from "lucide-react";
 import { updateRenderingCheck, type RenderingCheckState } from "@/app/actions";
@@ -32,7 +34,7 @@ export function RenderingCheckPanel({ application }: { application: MonitoredApp
           <strong>Contrôle du rendu</strong>
         </span>
         <span className="dependency-watch__state">{stateLabel}</span>
-        <span className="dependency-watch__date">Contrôlé · {application.lastCheckLabel}</span>
+        <span className="dependency-watch__date">Contrôlé · <LocalDateTime value={application.lastCheckedAt} format="precise" fallback="En attente" /></span>
         <ChevronRight className="dependency-watch__chevron" aria-hidden="true" />
       </summary>
       <div className="dependency-watch__body">

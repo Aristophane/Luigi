@@ -37,7 +37,7 @@ export interface MonitoredDependency {
 export interface DeploymentSummary {
   commitSha: string;
   shortCommit: string;
-  deployedAtLabel: string;
+  deployedAt: string;
   source: string;
   sourceUrl?: string;
   matchesRepositoryHead: boolean | null;
@@ -66,10 +66,10 @@ export interface MonitoredApplication {
   staleChecks?: number;
   uptime30d: number | null;
   latencyMs: number | null;
-  lastCheckLabel: string;
+  lastCheckedAt?: string;
   lastCheckStatus: HealthStatus;
   lastCheckDetail?: string;
-  lastRepositoryScanLabel: string;
+  lastRepositoryScannedAt?: string;
   renderingCheck?: RenderingCheckSettings;
   productionDeployment?: DeploymentSummary;
   technologies: Technology[];
@@ -91,9 +91,10 @@ export interface VpsOverview {
   connected: boolean;
   status: HealthStatus;
   hostname?: string;
-  lastSeenLabel: string;
+  lastSeenAt?: string;
   refreshIntervalLabel: string;
   dataAgeLabel: string;
+  nextReportAt?: string;
   nextReportLabel: string;
   freshnessStatus: "fresh" | "late" | "silent" | "unknown";
   metrics: ServerMetric[];
@@ -122,19 +123,19 @@ export interface MaintenanceTask {
   verification?: string;
   category: "security" | "dependency" | "capacity" | "backup" | "lifecycle";
   severity: "critical" | "high" | "medium" | "low";
-  dueLabel: string;
+  dueAt?: string;
   source: string;
   applicationName: string;
   status: "open" | "planned" | "in_progress" | "done" | "dismissed";
-  completedLabel?: string;
-  createdLabel: string;
+  completedAt?: string;
+  createdAt: string;
 }
 
 export interface ActivityEvent {
   id: string;
   title: string;
   detail: string;
-  timeLabel: string;
+  occurredAt: string;
   status: HealthStatus;
 }
 
@@ -146,5 +147,5 @@ export interface DashboardNotification {
   status: "unread" | "read";
   occurrenceCount: number;
   targetUrl: string;
-  createdLabel: string;
+  createdAt: string;
 }

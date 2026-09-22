@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { deliveryAttempts, jobs, notificationDeliveries, notifications } from "@/db/schema";
 import { readiness } from "@/lib/readiness";
 import { retryDelivery } from "@/app/settings/integrations/actions";
+import { LocalDateTime } from "@/components/local-date-time";
 
 const labels: Record<string, string> = { queued: "En attente", sending: "En cours", delivered: "Livrée", retrying: "Nouvelle tentative prévue",
   failed: "Échec définitif", skipped: "Canal non disponible", started: "Démarrée · résultat non confirmé", succeeded: "Traitée" };
@@ -29,9 +30,9 @@ export async function DeliveryLog({ workspaceId }: { workspaceId: string }) {
       const status = failed && delivery.status !== "delivered" ? "failed" : delivery.status;
       return <details key={delivery.id} className="delivery-log__entry">
         <summary><strong>{notification.title}</strong><span>{delivery.channel === "discord" ? "Discord" : "Web Push"} · {labels[status] ?? status}</span></summary>
-        <small>{delivery.createdAt.toLocaleString("fr-FR")} · {delivery.recipient === "webhook" ? "Salon configuré" : delivery.recipient === "none" ? "Aucun navigateur" : "Navigateur " + delivery.recipient.slice(0, 8)}</small>
+        <small><LocalDateTime value={delivery.createdAt.toISOString()} format="precise" /> · {delivery.recipient === "webhook" ? "Salon configuré" : delivery.recipient === "none" ? "Aucun navigateur" : "Navigateur " + delivery.recipient.slice(0, 8)}</small>
         <ol>{attempts.filter((attempt) => attempt.deliveryId === delivery.id).map((attempt) => <li key={attempt.id}>
-          {attempt.createdAt.toLocaleString("fr-FR")} · {labels[attempt.outcome] ?? attempt.outcome}{attempt.detail ? " · " + attempt.detail : ""}
+          <LocalDateTime value={attempt.createdAt.toISOString()} format="precise" /> · {labels[attempt.outcome] ?? attempt.outcome}{attempt.detail ? " · " + attempt.detail : ""}
         </li>)}</ol>
         {["failed", "skipped"].includes(status) && !notification.resolvedAt && delivery.recipient !== "none" && <form action={retryDelivery.bind(null, delivery.id)}>
           <button type="submit" className="button button--secondary">Relancer l’envoi</button>

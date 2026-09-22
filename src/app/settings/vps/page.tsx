@@ -74,7 +74,6 @@ export default async function VpsSettingsPage() {
           connected={connected}
           label={agent?.label}
           lastSyncedAt={agent?.lastSyncedAt?.toISOString()}
-          lastSyncedLabel={agent?.lastSyncedAt?.toLocaleString("fr-FR")}
           enrolledAt={enrolledAt}
           systemLabel={systemLabel}
           reportIntervalLabel={reportIntervalLabel}

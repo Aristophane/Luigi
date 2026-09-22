@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Clipboard, KeyRound, RadioTower, TerminalSquare } from "lucide-react";
 import { issueVpsAgentEnrollment, type VpsAgentActionState } from "@/app/settings/vps/actions";
+import { LocalDateTime } from "@/components/local-date-time";
 
 const initialState: VpsAgentActionState = { status: "idle", message: "" };
 
@@ -12,7 +13,6 @@ type VpsAgentSetupProps = {
   connected: boolean;
   label?: string;
   lastSyncedAt?: string;
-  lastSyncedLabel?: string;
   enrolledAt?: string;
   systemLabel?: string;
   reportIntervalLabel: string;
@@ -26,7 +26,6 @@ export function VpsAgentSetup({
   connected,
   label,
   lastSyncedAt,
-  lastSyncedLabel,
   enrolledAt,
   systemLabel,
   reportIntervalLabel,
@@ -59,10 +58,6 @@ export function VpsAgentSetup({
     const timeout = window.setTimeout(() => setExpired(true), Math.max(0, delay));
     return () => window.clearTimeout(timeout);
   }, [enrollmentRedeemed, state.expiresAt]);
-
-  const expiryLabel = useMemo(() => state.expiresAt
-    ? new Date(state.expiresAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-    : null, [state.expiresAt]);
 
   async function copyCommand(value: string, target: "primary" | "fallback") {
     await navigator.clipboard.writeText(value);
@@ -97,8 +92,8 @@ export function VpsAgentSetup({
           <p className="eyebrow">Collecteur sortant</p>
           <h2 id="agent-setup-title">{label ?? "Connecter un VPS"}</h2>
           <p>
-            {lastSyncedLabel
-              ? `${systemLabel ? `${systemLabel} · ` : ""}Dernier rapport ${lastSyncedLabel} · collecte toutes les ${reportIntervalLabel}`
+            {lastSyncedAt
+              ? <>{systemLabel ? `${systemLabel} · ` : ""}Dernier rapport <LocalDateTime value={lastSyncedAt} /> · collecte toutes les {reportIntervalLabel}</>
               : configured
                 ? "L’agent est authentifié. Luigi attend son premier rapport."
                 : "Une commande, puis Luigi détecte automatiquement Ubuntu ou Debian."}
@@ -131,7 +126,7 @@ export function VpsAgentSetup({
         <div className="agent-credentials" aria-live="polite">
           <div className="agent-credentials__heading">
             <TerminalSquare aria-hidden="true" />
-            <span><strong>Colle cette commande sur le VPS</strong><small>{state.message}{expiryLabel ? ` Expiration à ${expiryLabel}.` : ""}</small></span>
+            <span><strong>Colle cette commande sur le VPS</strong><small>{state.message}{state.expiresAt && <> Expiration à <LocalDateTime value={state.expiresAt} format="time" />.</>}</small></span>
           </div>
           <div className="copy-field copy-field--command">
             <code>{state.installCommand}</code>

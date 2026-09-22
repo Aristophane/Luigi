@@ -287,6 +287,10 @@ select:focus-visible {
   margin-bottom: var(--space-12);
 }
 
+.topbar > div:first-child {
+  min-width: 0;
+}
+
 .eyebrow {
   margin: 0 0 var(--space-1);
   color: var(--text-tertiary);
@@ -326,6 +330,7 @@ h3 {
 
 .topbar__actions {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--space-2);
 }
@@ -582,7 +587,7 @@ h3 {
   -webkit-line-clamp: 2;
 }
 
-.notification-link time {
+.notification-item__time {
   color: var(--text-tertiary);
   font-size: 0.64rem;
   font-variant-numeric: tabular-nums;
@@ -725,10 +730,8 @@ h3 {
 
 .dashboard-grid {
   display: grid;
-  grid-template-areas:
-    "vps tasks"
-    "vps activity";
-  grid-template-columns: minmax(18rem, 0.85fr) minmax(0, 1.15fr);
+  grid-template-areas: "tasks activity";
+  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
   column-gap: clamp(2rem, 4vw, 4rem);
   row-gap: var(--space-12);
 }
@@ -743,7 +746,17 @@ h3 {
 .applications-section {
   margin-bottom: var(--space-12);
 }
-.vps-section { grid-area: vps; }
+.vps-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin-bottom: var(--space-12);
+  scroll-margin-top: var(--space-6);
+}
+
+.local-time-note {
+  white-space: nowrap;
+}
 .tasks-section { grid-area: tasks; }
 .activity-section { grid-area: activity; }
 
@@ -1401,8 +1414,8 @@ h3 {
 }
 
 .metric-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-6);
 }
 
@@ -1448,7 +1461,7 @@ h3 {
 
 .vps-facts {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
   margin-top: var(--space-8);
   padding-top: var(--space-4);
@@ -1498,7 +1511,7 @@ h3 {
   color: var(--warning);
 }
 
-.vps-facts span {
+.vps-facts > span {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
@@ -1756,12 +1769,12 @@ h3 {
 }
 
 .activity-list span,
-.activity-list time {
+.activity-list__time {
   color: var(--text-tertiary);
   font-size: 0.7rem;
 }
 
-.activity-list time {
+.activity-list__time {
   font-variant-numeric: tabular-nums;
 }
 
@@ -2891,10 +2904,13 @@ h3 {
 
   .dashboard-grid {
     grid-template-areas:
-      "vps"
       "tasks"
       "activity";
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .metric-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .auth-shell {
@@ -3095,7 +3111,16 @@ h3 {
 
   .topbar {
     align-items: flex-start;
+    gap: var(--space-3);
     margin-bottom: var(--space-8);
+  }
+
+  .local-time-note {
+    white-space: normal;
+  }
+
+  .vps-section .section-heading {
+    flex-wrap: wrap;
   }
 
   .topbar__actions .button--primary {
@@ -3222,6 +3247,10 @@ h3 {
   .vps-freshness {
     grid-template-columns: 1fr;
     gap: var(--space-2);
+  }
+
+  .vps-facts {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .vps-freshness span {

@@ -204,14 +204,10 @@ export default async function Home() {
       repositoryCommitMessage: application.repositoryCommitMessage ?? undefined,
       uptime30d: uptime?.uptime30d ?? null,
       latencyMs: fresh ? latest?.latencyMs ?? null : null,
-      lastCheckLabel: latest?.observedAt
-        ? latest.observedAt.toLocaleString("fr-FR")
-        : "En attente",
+      lastCheckedAt: latest?.observedAt?.toISOString(),
       lastCheckStatus: fresh ? latest?.status ?? "unknown" : "unknown",
       lastCheckDetail: latest?.detail ?? undefined,
-      lastRepositoryScanLabel: application.lastRepositoryScannedAt
-        ? application.lastRepositoryScannedAt.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
-        : "Jamais analysé",
+      lastRepositoryScannedAt: application.lastRepositoryScannedAt?.toISOString(),
       renderingCheck: httpCheck ? {
         renderingUrl: httpCheck.renderingUrl ?? undefined,
         expectedText: httpCheck.expectedText ?? undefined,
@@ -221,12 +217,7 @@ export default async function Home() {
       productionDeployment: productionDeployment ? {
         commitSha: productionDeployment.commitSha,
         shortCommit: productionDeployment.commitSha.slice(0, 7),
-        deployedAtLabel: productionDeployment.deployedAt.toLocaleString("fr-FR", {
-          day: "numeric",
-          month: "short",
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+        deployedAt: productionDeployment.deployedAt.toISOString(),
         source: productionDeployment.source,
         sourceUrl: productionDeployment.sourceUrl ?? undefined,
         matchesRepositoryHead: application.repositoryCommit
@@ -274,14 +265,12 @@ export default async function Home() {
     verification: task.verification ?? undefined,
     category: task.category,
     severity: task.severity,
-    dueLabel: task.dueAt
-      ? `Échéance ${task.dueAt.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`
-      : "À planifier",
+    dueAt: task.dueAt?.toISOString(),
     source: task.automatic ? "Analyse automatique" : "Tâche manuelle",
     applicationName: task.applicationId ? applicationNames.get(task.applicationId) ?? "Application archivée" : "VPS · Infrastructure",
     status: task.status,
-    completedLabel: task.completedAt?.toLocaleString("fr-FR"),
-    createdLabel: task.createdAt.toLocaleString("fr-FR"),
+    completedAt: task.completedAt?.toISOString(),
+    createdAt: task.createdAt.toISOString(),
   });
   const maintenanceTasks = persistedTasks.map(mapMaintenanceTask);
   const maintenanceHistory = persistedTaskHistory.map(mapMaintenanceTask);
@@ -293,14 +282,13 @@ export default async function Home() {
     status: notification.status as "unread" | "read",
     occurrenceCount: notification.occurrenceCount,
     targetUrl: notification.targetUrl ?? "/#overview",
-    createdLabel: notification.lastOccurredAt.toLocaleString("fr-FR"),
+    createdAt: notification.lastOccurredAt.toISOString(),
   }));
   const activity: ActivityEvent[] = [
     ...recentObservations.map((observation) => ({
       id: observation.id,
       title: `Contrôle de ${observation.applicationName}`,
       detail: observation.detail ?? (observation.statusCode ? `HTTP ${observation.statusCode}` : "Contrôle terminé"),
-      timeLabel: observation.observedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
       status: observation.status,
       occurredAt: observation.observedAt,
     })),
@@ -308,7 +296,6 @@ export default async function Home() {
       id: deployment.id,
       title: `${deployment.applicationName} déployée`,
       detail: `${deployment.commitSha.slice(0, 7)} · ${deploymentSourceLabel(deployment.source)}`,
-      timeLabel: deployment.deployedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
       status: "healthy" as const,
       occurredAt: deployment.deployedAt,
     })),
@@ -319,7 +306,7 @@ export default async function Home() {
       id: event.id,
       title: event.title,
       detail: event.detail,
-      timeLabel: event.timeLabel,
+      occurredAt: event.occurredAt.toISOString(),
       status: event.status,
     }));
   function buildVpsOverview(vpsAgent?: typeof registeredAgents[number]): VpsOverview {
@@ -405,13 +392,13 @@ export default async function Home() {
     connected: freshnessStatus === "fresh",
     status: stale ? "unknown" : freshnessStatus === "late" || runtimeState !== "complete" ? "warning" : vpsMetricStatus,
     hostname: latestVpsSample?.hostname,
-    lastSeenLabel: latestVpsSample?.observedAt.toLocaleString("fr-FR") ?? "Aucun rapport reçu",
+    lastSeenAt: latestVpsSample?.observedAt.toISOString(),
     refreshIntervalLabel: `Toutes les ${durationLabel(refreshIntervalSeconds)}`,
     dataAgeLabel: reportAgeSeconds === null ? "Aucune donnée" : `Il y a ${durationLabel(reportAgeSeconds)}`,
+    nextReportAt: nextReportAt && reportAgeSeconds !== null && reportAgeSeconds <= refreshIntervalSeconds
+      ? nextReportAt.toISOString() : undefined,
     nextReportLabel: nextReportAt
-      ? reportAgeSeconds !== null && reportAgeSeconds <= refreshIntervalSeconds
-        ? `Vers ${nextReportAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
-        : `Attendu depuis ${durationLabel(Math.max(0, (reportAgeSeconds ?? refreshIntervalSeconds) - refreshIntervalSeconds))}`
+      ? `Attendu depuis ${durationLabel(Math.max(0, (reportAgeSeconds ?? refreshIntervalSeconds) - refreshIntervalSeconds))}`
       : "Après le premier rapport",
     freshnessStatus,
     metrics: vpsMetrics.map((metric) => ({ ...metric, status: stale ? "unknown" : metric.status })),
@@ -448,7 +435,7 @@ export default async function Home() {
       vps={vpsOverviews[0] ?? buildVpsOverview()}
       vpsServers={vpsOverviews}
       monitoringReady={monitoringReady.ready}
-      dateLabel={renderedAt.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", weekday: "long", day: "numeric", month: "long" })}
+      renderedAt={renderedAt.toISOString()}
       userName={session.user.name}
       githubIntegrationLabel={githubIntegration?.label}
     />

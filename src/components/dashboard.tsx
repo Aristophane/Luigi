@@ -50,6 +50,7 @@ import { ServiceWorkerRegistration } from "@/components/service-worker-registrat
 import { StatusDot } from "@/components/status-dot";
 import { RenderingCheckPanel } from "@/components/rendering-check-panel";
 import { ScanApplicationButton } from "@/components/scan-application-button";
+import { LocalDateTime } from "@/components/local-date-time";
 import type { ActivityEvent, DashboardNotification, GitHubRepositoryOption, MaintenanceTask, MonitoredApplication, VpsOverview } from "@/lib/domain";
 
 type Theme = "light" | "dark";
@@ -105,12 +106,12 @@ type DashboardProps = {
   vps: VpsOverview;
   vpsServers?: VpsOverview[];
   monitoringReady?: boolean;
-  dateLabel?: string;
+  renderedAt?: string;
   userName: string;
   githubIntegrationLabel?: string;
 };
 
-export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, unreadNotificationCount, activity, vps, vpsServers = [], monitoringReady, dateLabel, userName, githubIntegrationLabel }: DashboardProps) {
+export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, unreadNotificationCount, activity, vps, vpsServers = [], monitoringReady, renderedAt, userName, githubIntegrationLabel }: DashboardProps) {
   const router = useRouter();
   useEffect(() => {
     const timer = window.setInterval(() => { if (!document.hidden) router.refresh(); }, 15000);
@@ -412,7 +413,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
         <main className="main-content" id="main-content">
           <header className="topbar">
             <div>
-              <p className="eyebrow">{dateLabel ?? "Vue d’ensemble"}</p>
+              <p className="eyebrow"><LocalDateTime value={renderedAt} format="day" fallback="Vue d’ensemble" /><span className="local-time-note"> · Heure locale</span></p>
               <h1>Bonjour {userName.split(" ")[0]}.</h1>
             </div>
             <div className="topbar__actions">
@@ -441,7 +442,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                           <span>
                             <strong>{notification.title}</strong>
                             <small>{notification.body}</small>
-                            <time>{notification.createdLabel}{notification.occurrenceCount > 1 ? ` · ${notification.occurrenceCount} occurrences` : ""}</time>
+                            <span className="notification-item__time"><LocalDateTime value={notification.createdAt} />{notification.occurrenceCount > 1 ? ` · ${notification.occurrenceCount} occurrences` : ""}</span>
                           </span>
                         </button>
                       </form>
@@ -475,6 +476,93 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
           </section>
 
           {monitoringReady === false && <p className="collection-warning" role="status">Supervision indisponible ou en retard. Les données affichées peuvent être périmées. <Link href="/settings/integrations#delivery-log">Voir le suivi</Link></p>}
+          <div className="vps-overview" id="vps">
+          {(vpsServers.length ? vpsServers : [vps]).map((vps) => <section key={vps.serverId ?? "empty"} className="section vps-section" aria-label={vps.hostname ?? "VPS"}>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Ubuntu 24.04</p>
+                <h2>{vps.hostname ?? "VPS à relier"}</h2>
+              </div>
+              <div className="section-heading__actions">
+                <StatusDot status={vps.status} />
+                <Link className="text-link" href="/storage"><HardDrive aria-hidden="true" /> Espace disque</Link>
+                <Link className="text-link" href="/settings/vps">Configurer</Link>
+              </div>
+            </div>
+
+            {vps.metrics.length > 0 ? <div className="metric-list">
+              {vps.metrics.map((metric) => (
+                <div className="metric-row" key={metric.id}>
+                  <div className="metric-row__heading">
+                    <span>{metric.label}</span>
+                    <strong>{metric.displayValue}</strong>
+                  </div>
+                  <div className="meter" role="meter" aria-label={metric.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}>
+                    <span className={`meter__value meter__value--${metric.status}`} style={{ transform: `scaleX(${metric.value / 100})` }} />
+                  </div>
+                  <small>{metric.detail}</small>
+                </div>
+              ))}
+            </div> : (
+              <div className="empty-state vps-empty-state">
+                <Server aria-hidden="true" />
+                <strong>{vps.configured ? "En attente du premier rapport." : "Le VPS n’est pas encore relié."}</strong>
+                <span>{vps.configured ? "Démarre le service sur Ubuntu pour remplacer cette zone par les mesures réelles." : "Crée un jeton puis installe l’agent en quelques commandes."}</span>
+                <Link className="button button--secondary" href="/settings/vps">{vps.configured ? "Voir l’installation" : "Relier le VPS"}</Link>
+              </div>
+            )}
+
+            {vps.metrics.length > 0 && <>
+              <div className={`vps-freshness vps-freshness--${vps.freshnessStatus}`}>
+                <span><strong>Collecte</strong><small>{vps.refreshIntervalLabel}</small></span>
+                <span><strong>Dernière donnée</strong><small>{vps.dataAgeLabel}</small></span>
+                <span><strong>Prochaine attendue</strong><small>{vps.nextReportAt ? <>Vers <LocalDateTime value={vps.nextReportAt} format="time" /></> : vps.nextReportLabel}</small></span>
+              </div>
+              <p className="collection-coverage">
+                Collecte {({ complete: "complète", partial: "partielle", absent: "absente", stale: "obsolète" })[vps.runtime.completeness ?? "absent"]}
+                {vps.runtime.completeness === "partial" && " · " + (vps.runtime.omittedUnits ?? 0) + " unités et " + (vps.runtime.omittedEvents ?? 0) + " événements omis (au minimum). Les autres données ne sont pas confirmées."}
+              </p>
+              <div className="vps-facts">
+                <span>
+                  <ShieldCheck aria-hidden="true" />
+                  <strong>{vps.securityUpdates === 0 ? "À jour" : `${vps.securityUpdates} à appliquer`}</strong>
+                  <small>Correctifs de sécurité · UFW {vps.ufwActive === null ? "inconnu" : vps.ufwActive ? "actif" : "inactif"}</small>
+                </span>
+                <span>
+                  <HardDrive aria-hidden="true" />
+                  <strong>{vps.backupStatus === "ok" ? "Réussie" : vps.backupStatus === "failed" ? "À vérifier" : "Non configurée"}</strong>
+                  <small>Sauvegarde · <LocalDateTime value={vps.lastSeenAt} fallback="Aucun rapport reçu" /></small>
+                </span>
+                <span className={`vps-fact--${vps.runtime.oomKills24h > 0
+                  ? "critical"
+                  : vps.runtime.restarts24h > 0 || vps.runtime.completeness !== "complete" ? "warning" : "healthy"}`}
+                >
+                  <MemoryStick aria-hidden="true" />
+                  <strong>
+                    {vps.runtime.collector === "missing"
+                      ? "Non activés"
+                      : vps.runtime.collector === "silent"
+                        ? "Collecteur muet"
+                        : vps.runtime.oomKills24h > 0
+                          ? `${vps.runtime.oomKills24h} arrêt${vps.runtime.oomKills24h > 1 ? "s" : ""} mémoire`
+                          : vps.runtime.restarts24h > 0
+                            ? `${vps.runtime.restarts24h} redémarrage${vps.runtime.restarts24h > 1 ? "s" : ""}`
+                            : vps.runtime.completeness === "complete" ? "Aucun arrêt observé" : "Historique incomplet"}
+                  </strong>
+                  <small>
+                    {vps.runtime.collector === "missing"
+                      ? "Signaux d’exécution · réinstalle l’agent pour les activer"
+                      : vps.runtime.collector === "silent"
+                        ? "Signaux d’exécution · vérifier luigi-runtime.service"
+                        : `Exécution 24 h · ${vps.runtime.trackedUnits} conteneur${vps.runtime.trackedUnits > 1 ? "s" : ""} et service${vps.runtime.trackedUnits > 1 ? "s" : ""}`}
+                  </small>
+                </span>
+              </div>
+              {vps.rebootRequired && <p className="vps-action-note"><RefreshCw aria-hidden="true" /> Redémarrage requis après mise à jour. Une tâche de maintenance a été créée.</p>}
+            </>}
+          </section>)}
+          </div>
+
           <section className="section applications-section" id="applications" aria-labelledby="applications-title">
               <div className="section-heading">
                 <div>
@@ -561,7 +649,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                           <GitCommitHorizontal aria-hidden="true" />
                           <span><small>Dernier commit présent · {application.repositoryCommit?.slice(0, 7) ?? "Non analysé"}</small><strong className="commit-message" title={application.repositoryCommitMessage}>{application.repositoryCommitMessage?.split("\n")[0] ?? "Message disponible à la prochaine analyse"}</strong></span>
                         </a>
-                        <small className="release-station__date">Observé · {application.lastRepositoryScanLabel}</small>
+                        <small className="release-station__date">Observé · <LocalDateTime value={application.lastRepositoryScannedAt} fallback="Jamais analysé" /></small>
                       </div>
 
                       <div className="release-track" aria-hidden="true">
@@ -585,7 +673,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                               <span><small>Version déployée</small><strong>{deployment.shortCommit}</strong></span>
                             </span>
                           )}
-                          <small className="release-station__date">Déployé le {deployment.deployedAtLabel} · {deploymentSourceLabels[deployment.source] ?? deployment.source}</small>
+                          <small className="release-station__date">Déployé le <LocalDateTime value={deployment.deployedAt} /> · {deploymentSourceLabels[deployment.source] ?? deployment.source}</small>
                         </> : <>
                           <span className="release-station__commit release-station__commit--empty">
                             <GitCommitHorizontal aria-hidden="true" />
@@ -625,7 +713,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                                 ? "À jour"
                                 : "Aucune détectée"}
                         </span>
-                        <span className="dependency-watch__date">Analysé · {application.lastRepositoryScanLabel}</span>
+                        <span className="dependency-watch__date">Analysé · <LocalDateTime value={application.lastRepositoryScannedAt} fallback="Jamais analysé" /></span>
                         <ChevronRight className="dependency-watch__chevron" aria-hidden="true" />
                       </summary>
                       <div className="dependency-watch__body">
@@ -681,93 +769,6 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
 
           <div className="dashboard-grid">
 
-            <div id="vps">
-            {(vpsServers.length ? vpsServers : [vps]).map((vps) => <section key={vps.serverId ?? "empty"} className="section vps-section" aria-label={vps.hostname ?? "VPS"}>
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Ubuntu 24.04</p>
-                  <h2>{vps.hostname ?? "VPS à relier"}</h2>
-                </div>
-                <div className="section-heading__actions">
-                  <StatusDot status={vps.status} />
-                  <Link className="text-link" href="/storage"><HardDrive aria-hidden="true" /> Espace disque</Link>
-                  <Link className="text-link" href="/settings/vps">Configurer</Link>
-                </div>
-              </div>
-
-              {vps.metrics.length > 0 ? <div className="metric-list">
-                {vps.metrics.map((metric) => (
-                  <div className="metric-row" key={metric.id}>
-                    <div className="metric-row__heading">
-                      <span>{metric.label}</span>
-                      <strong>{metric.displayValue}</strong>
-                    </div>
-                    <div className="meter" role="meter" aria-label={metric.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}>
-                      <span className={`meter__value meter__value--${metric.status}`} style={{ transform: `scaleX(${metric.value / 100})` }} />
-                    </div>
-                    <small>{metric.detail}</small>
-                  </div>
-                ))}
-              </div> : (
-                <div className="empty-state vps-empty-state">
-                  <Server aria-hidden="true" />
-                  <strong>{vps.configured ? "En attente du premier rapport." : "Le VPS n’est pas encore relié."}</strong>
-                  <span>{vps.configured ? "Démarre le service sur Ubuntu pour remplacer cette zone par les mesures réelles." : "Crée un jeton puis installe l’agent en quelques commandes."}</span>
-                  <Link className="button button--secondary" href="/settings/vps">{vps.configured ? "Voir l’installation" : "Relier le VPS"}</Link>
-                </div>
-              )}
-
-              {vps.metrics.length > 0 && <>
-                <div className={`vps-freshness vps-freshness--${vps.freshnessStatus}`}>
-                  <span><strong>Collecte</strong><small>{vps.refreshIntervalLabel}</small></span>
-                  <span><strong>Dernière donnée</strong><small>{vps.dataAgeLabel}</small></span>
-                  <span><strong>Prochaine attendue</strong><small>{vps.nextReportLabel}</small></span>
-                </div>
-                <p className="collection-coverage">
-                  Collecte {({ complete: "complète", partial: "partielle", absent: "absente", stale: "obsolète" })[vps.runtime.completeness ?? "absent"]}
-                  {vps.runtime.completeness === "partial" && " · " + (vps.runtime.omittedUnits ?? 0) + " unités et " + (vps.runtime.omittedEvents ?? 0) + " événements omis (au minimum). Les autres données ne sont pas confirmées."}
-                </p>
-                <div className="vps-facts">
-                  <span>
-                    <ShieldCheck aria-hidden="true" />
-                    <strong>{vps.securityUpdates === 0 ? "À jour" : `${vps.securityUpdates} à appliquer`}</strong>
-                    <small>Correctifs de sécurité · UFW {vps.ufwActive === null ? "inconnu" : vps.ufwActive ? "actif" : "inactif"}</small>
-                  </span>
-                  <span>
-                    <HardDrive aria-hidden="true" />
-                    <strong>{vps.backupStatus === "ok" ? "Réussie" : vps.backupStatus === "failed" ? "À vérifier" : "Non configurée"}</strong>
-                    <small>Sauvegarde · {vps.lastSeenLabel}</small>
-                  </span>
-                  <span className={`vps-fact--${vps.runtime.oomKills24h > 0
-                    ? "critical"
-                    : vps.runtime.restarts24h > 0 || vps.runtime.completeness !== "complete" ? "warning" : "healthy"}`}
-                  >
-                    <MemoryStick aria-hidden="true" />
-                    <strong>
-                      {vps.runtime.collector === "missing"
-                        ? "Non activés"
-                        : vps.runtime.collector === "silent"
-                          ? "Collecteur muet"
-                          : vps.runtime.oomKills24h > 0
-                            ? `${vps.runtime.oomKills24h} arrêt${vps.runtime.oomKills24h > 1 ? "s" : ""} mémoire`
-                            : vps.runtime.restarts24h > 0
-                              ? `${vps.runtime.restarts24h} redémarrage${vps.runtime.restarts24h > 1 ? "s" : ""}`
-                              : vps.runtime.completeness === "complete" ? "Aucun arrêt observé" : "Historique incomplet"}
-                    </strong>
-                    <small>
-                      {vps.runtime.collector === "missing"
-                        ? "Signaux d’exécution · réinstalle l’agent pour les activer"
-                        : vps.runtime.collector === "silent"
-                          ? "Signaux d’exécution · vérifier luigi-runtime.service"
-                          : `Exécution 24 h · ${vps.runtime.trackedUnits} conteneur${vps.runtime.trackedUnits > 1 ? "s" : ""} et service${vps.runtime.trackedUnits > 1 ? "s" : ""}`}
-                    </small>
-                  </span>
-                </div>
-                {vps.rebootRequired && <p className="vps-action-note"><RefreshCw aria-hidden="true" /> Redémarrage requis après mise à jour. Une tâche de maintenance a été créée.</p>}
-              </>}
-            </section>)}
-            </div>
-
             <section className="section tasks-section" id="maintenance" aria-labelledby="tasks-title">
               <div className="section-heading">
                 <div>
@@ -796,7 +797,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                         <h3>{task.title}</h3>
                         <span className={`severity severity--${task.severity}`}>{severityLabels[task.severity]}</span>
                       </div>
-                      <p><strong>{task.applicationName}</strong> · {task.source} · {task.dueLabel}</p>
+                      <p><strong>{task.applicationName}</strong> · {task.source} · {task.dueAt ? <>Échéance <LocalDateTime value={task.dueAt} format="date" /></> : "À planifier"}</p>
                     </div>
                     <button className="row-action" type="button" aria-label={`Ouvrir la tâche ${task.title}`}>
                       <ChevronRight aria-hidden="true" />
@@ -818,7 +819,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                     <article className="history-row" key={task.id}>
                       <div>
                         <strong>{task.title}</strong>
-                        <small>{task.applicationName} · {task.status === "dismissed" ? "Classée" : "Terminée"}{task.completedLabel ? ` le ${task.completedLabel}` : ""}</small>
+                        <small>{task.applicationName} · {task.status === "dismissed" ? "Classée" : "Terminée"}{task.completedAt ? <> le <LocalDateTime value={task.completedAt} /></> : null}</small>
                       </div>
                       <form action={reopenMaintenanceTask.bind(null, task.id)}>
                         <button className="button button--quiet button--compact" type="submit">
@@ -845,7 +846,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                   <li key={event.id}>
                     <StatusDot status={event.status} compact />
                     <div><strong>{event.title}</strong><span>{event.detail}</span></div>
-                    <time>{event.timeLabel}</time>
+                    <LocalDateTime className="activity-list__time" value={event.occurredAt} format="time" />
                   </li>
                 ))}
                 {activity.length === 0 && (

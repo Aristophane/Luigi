@@ -122,15 +122,17 @@ Dans ce parcours, ne pas lancer manuellement `db:push`, `db:generate` ou une mig
 
 ## 5. Activer le contrôle de santé de `luigi:main`
 
-Quand `/api/ready` est valide, activer le Healthcheck du **web**, pas celui du worker. Avec les versions de Coolify proposant le type **CMD**, utiliser :
+Quand `/api/ready` est valide, activer le Healthcheck du **web**, pas celui du worker. Dans le Terminal du web, vérifier d'abord que `curl --version` fonctionne, puis tester cette commande. Si elle renvoie le JSON de disponibilité sans erreur, utiliser exactement la même commande dans le champ **Command** du type **CMD** :
 
 ```sh
-node -e "fetch('http://127.0.0.1:3011/api/ready',{signal:AbortSignal.timeout(8000)}).then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"
+curl --fail --silent --show-error --max-time 8 http://127.0.0.1:3011/api/ready
 ```
+
+Le champ CMD accepte une commande et des arguments simples. Ne pas y coller de code JavaScript `node -e`, de guillemets ou d'opérateurs shell : la validation Coolify les refuse, même s'ils sont à l'intérieur d'un argument. `--fail` fait échouer le contrôle lorsque Luigi renvoie 503. [Validation du champ dans Coolify](https://github.com/coollabsio/coolify/blob/main/app/Livewire/Project/Shared/HealthChecks.php)
 
 Réglages conseillés pour cette installation : intervalle **15 s**, timeout **10 s**, retries **3**, start period **60 s**. Enregistrer, activer le contrôle puis redémarrer le web pour appliquer sa configuration au conteneur.
 
-Si ton Coolify ne propose que le type HTTP, vérifier d'abord dans le Terminal du web que `command -v curl || command -v wget` trouve un client, puis renseigner `GET`, `http`, `localhost`, port `3011`, chemin `/api/ready`. Un client absent rend ce contrôle invalide ; utiliser le type CMD ci-dessus si disponible, ou installer un client dans l'image Nixpacks avant de l'activer.
+Si `curl` est absent mais que `wget` est disponible, ou si ton Coolify ne propose que le type HTTP, utiliser le contrôle HTTP : vider d'abord l'ancienne valeur du champ Command, puis renseigner `GET`, `http`, `localhost`, port `3011`, chemin `/api/ready`. Vérifier dans le Terminal du web que `command -v curl || command -v wget` trouve un client. Si les deux sont absents, installer un client dans l'image Nixpacks avant d'activer ce contrôle.
 
 Avec Traefik, une application déclarée unhealthy peut être retirée du routage : en cas de panne worker, le domaine peut donc afficher une erreur proxy au lieu du JSON 503. Le témoin externe doit considérer toute réponse différente de 200 ou absence de réponse comme une panne. [Health checks Coolify](https://coolify.io/docs/applications/configuration/health-checks)
 

@@ -39,14 +39,14 @@ export default async function MaintenancePage({ searchParams }: { searchParams: 
     verification: task.verification ?? undefined,
     category: task.category,
     severity: task.severity,
-    dueLabel: task.dueAt ? `Échéance ${task.dueAt.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" })}` : "À planifier",
+    dueAt: task.dueAt?.toISOString(),
     source: task.automatic ? "Analyse automatique" : "Tâche manuelle",
     applicationName: task.applicationId ? names.get(task.applicationId) ?? "Application archivée" : "VPS · Infrastructure",
     status: task.status,
-    completedLabel: task.completedAt?.toLocaleString("fr-FR"),
-    createdLabel: task.createdAt.toLocaleString("fr-FR"),
+    completedAt: task.completedAt?.toISOString(),
+    createdAt: task.createdAt.toISOString(),
   }));
-  const events = eventRows.map((event) => ({ ...event, createdLabel: event.createdAt.toLocaleString("fr-FR") }));
+  const events = eventRows.map((event) => ({ ...event, createdAt: event.createdAt.toISOString() }));
   const initialCategory = ["security", "dependency", "capacity", "backup", "lifecycle"].includes(params.category ?? "") ? params.category! : "all";
 
   return <main className="maintenance-shell">

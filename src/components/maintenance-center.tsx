@@ -5,8 +5,9 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { completeMaintenanceTask, createMaintenanceTask, reopenMaintenanceTask, setMaintenanceTaskStatus, type CreateTaskState } from "@/app/actions";
 import type { MaintenanceTask } from "@/lib/domain";
 import { maintenanceGuidance } from "@/lib/maintenance-guidance";
+import { LocalDateTime } from "@/components/local-date-time";
 
-type Event = { id: string; taskId: string; action: string; note: string | null; createdLabel: string };
+type Event = { id: string; taskId: string; action: string; note: string | null; createdAt: string };
 type Props = { tasks: MaintenanceTask[]; events: Event[]; applications: { id: string; name: string }[]; initialCategory: string };
 
 const severityLabels = { critical: "Critique", high: "Élevée", medium: "Moyenne", low: "Faible" };
@@ -88,14 +89,14 @@ export function MaintenanceCenter({ tasks, events, applications, initialCategory
           <div className="maintenance-action__main">
             <div className="maintenance-action__labels"><span className={`severity severity--${task.severity}`}>{severityLabels[task.severity]}</span><span>{categoryLabels[task.category]}</span><span>{statusLabels[task.status]}</span></div>
             <h3>{task.title}</h3>
-            <p className="maintenance-action__meta"><Clock3 aria-hidden="true" /> {task.dueLabel} · {task.source} · créée le {task.createdLabel}</p>
+            <p className="maintenance-action__meta"><Clock3 aria-hidden="true" /> {task.dueAt ? <>Échéance <LocalDateTime value={task.dueAt} format="date" /></> : "À planifier"} · {task.source} · créée le <LocalDateTime value={task.createdAt} /></p>
             <details className="maintenance-procedure">
               <summary><span>Voir la procédure et les preuves</span><ChevronDown aria-hidden="true" /></summary>
               <div className="maintenance-procedure__body">
                 <section><p className="eyebrow">Pourquoi agir</p><p>{guidance.impact}</p></section>
                 <section><p className="eyebrow">Étapes proposées</p><ol>{guidance.remediation.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol></section>
                 <section><p className="eyebrow">Avant de terminer</p><ul>{guidance.verification.map((step, index) => <li key={`${index}-${step}`}><Check aria-hidden="true" />{step}</li>)}</ul></section>
-                <section className="maintenance-evidence"><p className="eyebrow">Journal</p>{taskEvents.length ? <ol>{taskEvents.map((event) => <li key={event.id}><time>{event.createdLabel}</time><span>{event.note ?? event.action}</span></li>)}</ol> : <p>Aucun événement supplémentaire.</p>}</section>
+                <section className="maintenance-evidence"><p className="eyebrow">Journal</p>{taskEvents.length ? <ol>{taskEvents.map((event) => <li key={event.id}><LocalDateTime value={event.createdAt} /><span>{event.note ?? event.action}</span></li>)}</ol> : <p>Aucun événement supplémentaire.</p>}</section>
               </div>
             </details>
           </div>
