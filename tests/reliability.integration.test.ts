@@ -37,6 +37,34 @@ test("PostgreSQL reliability: atomic outbox, lease fencing, report replay, isola
   const fetchOriginal = globalThis.fetch;
   const oldWebhook = process.env.DISCORD_WEBHOOK_URL;
   try {
+    await t.test("existing synchronized checks spread out; manual checks preserve the schedule", async () => {
+      const [fixture] = await db.insert(workspaces).values({ name: "Schedule fixture" }).returning();
+      try {
+        const [app] = await db.insert(applications).values({ workspaceId: fixture.id, name: "Scheduled",
+          publicUrl: "https://example.com/", githubRepository: "test/test", lastRepositoryScannedAt: new Date() }).returning();
+        const active = await db.insert(checks).values(Array.from({ length: 6 }, () => ({
+          applicationId: app.id, target: "https://example.com/", intervalSeconds: 60, nextCheckAt: new Date(0),
+        }))).returning();
+        await db.insert(checks).values({ applicationId: app.id, target: "https://example.com/disabled", enabled: false });
+        const counts = await Promise.all([enqueueChecks(fixture.id), enqueueChecks(fixture.id)]);
+        assert.equal(counts.reduce((a, b) => a + b), 6);
+        const scheduled = await db.select().from(checks).where(and(eq(checks.applicationId, app.id), eq(checks.enabled, true)));
+        assert.deepEqual(scheduled.map((check) => check.nextCheckAt.getTime() % 60_000).sort((a, b) => a - b),
+          [0, 10_000, 20_000, 30_000, 40_000, 50_000]);
+        assert.equal((await db.select().from(jobs).where(eq(jobs.workspaceId, fixture.id))).length, 6);
+        // Complete the initial reservations to simulate a manual request between scheduled runs.
+        await db.delete(jobs).where(eq(jobs.workspaceId, fixture.id));
+        await db.update(checks).set({ nextCheckAt: new Date(Date.now() + 60_000) }).where(eq(checks.applicationId, app.id));
+        const before = await db.select().from(checks).where(eq(checks.applicationId, app.id)).orderBy(checks.id);
+        const requestedAt = new Date();
+        assert.equal(await enqueueChecks(fixture.id, true), 6);
+        const after = await db.select().from(checks).where(eq(checks.applicationId, app.id)).orderBy(checks.id);
+        assert.deepEqual(after.map((check) => check.nextCheckAt), before.map((check) => check.nextCheckAt));
+        const manual = await db.select().from(jobs).where(eq(jobs.workspaceId, fixture.id));
+        assert.equal(manual.length, active.length);
+        assert.ok(manual.every((job) => job.status === "queued" && job.availableAt >= requestedAt && job.availableAt <= new Date()));
+      } finally { await db.delete(workspaces).where(eq(workspaces.id, fixture.id)); }
+    });
     await t.test("notification and delivery tasks roll back together", async () => {
       await assert.rejects(db.transaction(async (tx) => {
         await createOrRefreshNotification({ workspaceId, title: "Rollback", body: "Test", severity: "high", targetUrl: "/", fingerprint: "rollback" }, tx);
@@ -173,7 +201,7 @@ test("PostgreSQL reliability: atomic outbox, lease fencing, report replay, isola
       await db.update(checks).set({ target: "http://127.0.0.1/" }).where(eq(checks.id, due.id));
       const job = await queue.claimJob("check");
       assert.ok(job);
-      await promisify(execFile)(process.execPath, ["--import", "./scripts/register.mjs", "src/worker.ts", job.id, job.lockToken!], {
+      await promisify(execFile)(process.execPath, ["build/worker/worker.mjs", job.id, job.lockToken!], {
         timeout: 15000, windowsHide: true, env: { ...process.env, DISCORD_WEBHOOK_URL: "" },
       });
       assert.equal((await db.select().from(jobs).where(eq(jobs.id, job.id)))[0].status, "succeeded");

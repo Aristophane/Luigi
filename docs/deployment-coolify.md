@@ -57,7 +57,9 @@ Depuis le projet et l'environnement qui contiennent tes deux ressources :
 | Pre / Post Deployment Command | Vides |
 | Réplicas | Un seul pour cette installation |
 
-Le Dockerfile fournit les commandes de construction et de démarrage ; ne pas lui substituer `npm start`. Il utilise Node.js 24, garde TypeScript disponible à l'exécution et ne construit pas le frontend. La politique de redémarrage du conteneur doit être `unless-stopped` ou `always`, si ton interface expose ce réglage. [Déploiement Dockerfile dans Coolify](https://coolify.io/docs/applications/builds/dockerfile)
+Le Dockerfile fournit les commandes de construction et de démarrage ; ne pas lui substituer `npm start`. Il utilise Node.js 24 et précompile le worker avec `npm run build:worker` dans une étape de construction séparée. L’image finale installe uniquement les dépendances de production et démarre `node build/worker/worker.mjs` après les migrations. Elle n’a pas besoin du chargeur TypeScript ni des sources et ne construit pas le frontend. La politique de redémarrage du conteneur doit être `unless-stopped` ou `always`, si ton interface expose ce réglage. [Déploiement Dockerfile dans Coolify](https://coolify.io/docs/applications/builds/dockerfile)
+
+Pour appliquer l’optimisation CPU à une installation existante, publier le code du worker, `scripts/build-worker.mjs`, `src/lib/check-schedule.ts`, le Dockerfile et les deux fichiers `package*.json`, puis lancer **Deploy** sur le worker : un simple Restart conserve l’ancienne image. Redéployer aussi le web sur le même commit pour les réservations manuelles et l’endpoint cron. Cette optimisation n’ajoute aucune migration SQL. Après un premier cycle, les six contrôles d’une minute occupent des créneaux espacés de dix secondes. Vérifier `/api/ready`, les nouvelles observations et les statistiques CPU.
 
 Dans **Environment Variables**, recopier les valeurs de `luigi:main` :
 

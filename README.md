@@ -15,7 +15,7 @@ npm run dev
 
 Ouvrir ensuite [http://localhost:3011](http://localhost:3011).
 
-Démarrer aussi **`npm run worker` dans un second terminal** : les contrôles, analyses, rapports et notifications utilisent désormais une file persistante. Sans ce processus, `/api/ready` et `/api/health` répondent 503. Pour une installation existante, suivre le [déploiement Coolify pas à pas](docs/deployment-coolify.md) ou le [guide de fiabilité](docs/reliability.md) pour une installation directe et le témoin externe.
+Démarrer aussi **`npm run build:worker`, puis `npm run worker` dans un second terminal** : les contrôles, analyses, rapports et notifications utilisent une file persistante. Reconstruire le worker après une modification de son code ; `npm run worker:dev` permet de travailler directement sur les sources. Sans ce processus, `/api/ready` et `/api/health` répondent 503. Pour une installation existante, suivre le [déploiement Coolify pas à pas](docs/deployment-coolify.md) ou le [guide de fiabilité](docs/reliability.md) pour une installation directe et le témoin externe.
 
 Au premier démarrage, Luigi redirige vers `/setup` pour créer l’unique compte administrateur de la V1. Les créations de compte suivantes sont refusées côté serveur. Copie `.env.example` vers `.env.local` si ce fichier n’existe pas et remplace impérativement `BETTER_AUTH_SECRET` hors développement local.
 
@@ -23,6 +23,8 @@ Au premier démarrage, Luigi redirige vers `/setup` pour créer l’unique compt
 
 - `npm run dev` : démarre l'application en développement ;
 - `npm run worker` : démarre le planificateur autonome et les quatre files de traitement ;
+- `npm run build:worker` : précompile le worker et ses modules en JavaScript ;
+- `npm run worker:dev` : exécute les sources TypeScript pour le développement uniquement ;
 - `npm test` : vérifie les règles et, avec `TEST_DATABASE_URL`, les transactions et reprises PostgreSQL ;
 - `npm run build` : produit la version de production ;
 - `npm run lint` : vérifie la qualité du code ;
@@ -43,6 +45,8 @@ Authorization: Bearer <MONITOR_CRON_SECRET>
 ```
 
 Cet endpoint facultatif réserve les tâches arrivées à échéance et renvoie 202. Le worker planifie aussi les contrôles de façon autonome. Une application passe en vigilance au premier échec ; un incident critique et une notification interne sont créés après trois échecs consécutifs. Le premier succès suivant résout automatiquement cet incident. Les redirections sont contrôlées et les adresses locales ou privées sont refusées afin de limiter les risques SSRF.
+
+Les contrôles de même fréquence sont répartis sur leur intervalle, tous espaces confondus : six contrôles à 60 secondes occupent six créneaux espacés de dix secondes. Le planificateur vérifie les échéances toutes les dix secondes. Les contrôles manuels restent immédiats et ne décalent pas les prochaines échéances automatiques. Après mise à jour, les contrôles déjà échus peuvent encore partir ensemble une fois ; leurs prochaines échéances sont ensuite réparties. Le worker de production exécute du JavaScript précompilé et charge seulement les modules nécessaires à chaque tâche.
 
 Le bloc **Contrôle du rendu** de chaque application ajoute des vérifications au contrôle HTTP, car une page peut répondre HTTP 200 alors que ses images ne se chargent plus. Elles s’appliquent à la **page à contrôler**, par exemple une fiche produit `/produits/jade`, ou à défaut à la page d’accueil ; la disponibilité reste mesurée sur la page d’accueil :
 

@@ -46,7 +46,7 @@ test("upgrade preserves legacy identity, then a real autonomous worker drives re
     const { readiness } = await import("@/lib/readiness");
     const { closeDatabase } = await import("@/db");
     assert.equal((await readiness()).ready, false);
-    child = spawn(process.execPath, ["--import", "./scripts/register.mjs", "src/worker.ts"], {
+    child = spawn(process.execPath, ["build/worker/worker.mjs"], {
       windowsHide: true, stdio: "ignore", env: { ...process.env, DISCORD_WEBHOOK_URL: "", VAPID_PRIVATE_KEY: "", NEXT_PUBLIC_VAPID_PUBLIC_KEY: "" },
     });
     try {

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --port 3011",
     "build": "next build",
+    "build:worker": "node scripts/build-worker.mjs",
     "start": "next start --port 3011",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -12,8 +13,9 @@
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:prod": "node scripts/migrate.mjs",
     "db:studio": "drizzle-kit studio",
-    "worker": "node --env-file-if-exists=.env.local --import ./scripts/register.mjs src/worker.ts",
-    "test": "node --import ./scripts/register.mjs --test tests/*.test.ts"
+    "worker": "node --env-file-if-exists=.env.local build/worker/worker.mjs",
+    "worker:dev": "node --env-file-if-exists=.env.local --import ./scripts/register.mjs src/worker.ts",
+    "test": "npm run build:worker && node --import ./scripts/register.mjs --test tests/*.test.ts"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "5.3.0",
@@ -36,6 +38,7 @@
     "@types/semver": "7.8.0",
     "@types/web-push": "^3.6.4",
     "drizzle-kit": "0.31.10",
+    "esbuild": "0.25.12",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.4",
     "typescript": "6.0.3"

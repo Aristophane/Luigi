@@ -4,14 +4,14 @@
 
 ## Mise en service
 
-Le serveur web reçoit les événements et réserve des tâches PostgreSQL. Un **processus séparé est désormais obligatoire** : `npm run worker`. Il faut Node.js 22.15+ (24 LTS recommandé), le code source et TypeScript installé, y compris en production. Le worker utilise les mêmes variables `DATABASE_URL`, `INTEGRATION_ENCRYPTION_KEY`, Discord et VAPID que le web. Il ne dépend ni de requêtes HTTP ni d’un cron externe.
+Le serveur web reçoit les événements et réserve des tâches PostgreSQL. Un **processus séparé est obligatoire** : `npm run worker`. Il faut Node.js 24 et construire le worker avec `npm run build:worker` avant son démarrage. Le runtime exécute `build/worker/worker.mjs` et ses chunks avec les dépendances de production ; TypeScript et esbuild servent uniquement à la construction. Le worker utilise les mêmes variables `DATABASE_URL`, `INTEGRATION_ENCRYPTION_KEY`, Discord et VAPID que le web. Il ne dépend ni de requêtes HTTP ni d’un cron externe.
 
 Pour mettre à jour une installation existante :
 
 1. Arrêter temporairement les anciens processus web/cron avant la migration.
 2. Exécuter `npm ci` puis `npm run db:migrate:prod` avec `DATABASE_URL` défini. La migration `0017` conserve les jetons et les identités des agents existants, rattache leur historique au serveur et initialise les états par contrôle.
 3. Construire et démarrer le web (`npm run build`, `npm start`).
-4. Démarrer le worker avec `npm run worker`, sous un superviseur qui le relance. Un exemple systemd est fourni dans `deploy/luigi-worker.service` ; adapter le compte `luigi`, les chemins et `/etc/luigi/worker.env`.
+4. Construire le worker avec `npm run build:worker`, puis le démarrer avec `npm run worker`, sous un superviseur qui le relance. Reconstruire après chaque changement de code. Un exemple systemd est fourni dans `deploy/luigi-worker.service` ; adapter le compte `luigi`, les chemins et `/etc/luigi/worker.env`.
 5. Vérifier que `/api/ready` répond 200. Sans worker, il répond 503. `/api/health` effectue les mêmes vérifications : PostgreSQL, fraîcheur du planificateur et des quatre files, absence de retard excessif.
 6. Mettre à jour les fichiers Python de l’agent pour transmettre les métadonnées d’exhaustivité. Pour conserver son identité, remplacer les scripts dans `/opt/luigi-agent/` sans réenrôler le serveur. Les anciens agents restent compatibles, mais leurs observations runtime sont considérées partielles.
 
@@ -27,6 +27,8 @@ Le cron `POST /api/cron/monitor` devient facultatif : il réserve les tâches du
 | Notifications | 4 | 20 s |
 
 Les tâches actives portent une clé unique et un bail expirant 15 secondes après leur budget. La réservation est atomique (`FOR UPDATE SKIP LOCKED` et verrou transactionnel par file). Les rapports d’un même agent sont sérialisés. Chaque traitement s’exécute dans un processus enfant arrêté à l’expiration du budget ; un jeton de réservation interdit à une ancienne tentative d’enregistrer ses résultats après une reprise.
+
+Les processus enfants exécutent le JavaScript précompilé et chargent l’exécuteur de leur seule catégorie. Les contrôles de même cadence sont ordonnés par identifiant et répartis régulièrement sur l’intervalle, sur l’ensemble des espaces. La boucle de planification de dix secondes permet de répartir six contrôles d’une minute sur six passages. Les échéances manquées ne sont pas rejouées en rafale ; la prochaine échéance est le prochain créneau futur. Le premier passage après mise à jour peut encore réserver ensemble les anciens contrôles échus. Une actualisation manuelle ne modifie pas leur cadence automatique. Aucune migration SQL supplémentaire n’est nécessaire.
 
 Cinq tentatives au maximum, avec délais de 15, 30, 60 puis 120 secondes. Un arrêt brutal laisse un bail récupérable. Une tâche épuisée reste dans le journal en échec ; elle n’est pas oubliée. Les contrôles et analyses ont ensuite de nouvelles échéances. Les échecs définitifs de rapports sont visibles dans le suivi ; leur reprise exige une intervention. Le journal de tâches n’a pas de purge automatique dans cette version.
 

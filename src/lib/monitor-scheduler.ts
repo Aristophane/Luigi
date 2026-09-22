@@ -4,9 +4,15 @@ import { db } from "@/db";
 import { applications, checks, jobs, workerHeartbeats, workspaces } from "@/db/schema";
 import { enqueueJob } from "@/lib/job-queue";
 import { evaluateMonitoringSilences } from "@/lib/monitoring-heartbeats";
+import { checkSlots, nextCheckSlot } from "@/lib/check-schedule";
 
 export async function enqueueChecks(workspaceId?: string, force = false) {
   return db.transaction(async (tx) => {
+    // Include every workspace so the same worker's checks share the whole interval.
+    // Manual checks keep their automatic due date and remain immediately runnable.
+    const slots = force ? undefined : checkSlots(await tx.select({ id: checks.id, intervalSeconds: checks.intervalSeconds })
+      .from(checks).innerJoin(applications, eq(applications.id, checks.applicationId))
+      .where(and(eq(checks.enabled, true), eq(checks.kind, "http"), isNull(applications.archivedAt))));
     const rows = await tx.select({ check: checks, workspaceId: applications.workspaceId })
       .from(checks).innerJoin(applications, eq(applications.id, checks.applicationId))
       .where(and(eq(checks.enabled, true), eq(checks.kind, "http"), isNull(applications.archivedAt),
@@ -18,7 +24,8 @@ export async function enqueueChecks(workspaceId?: string, force = false) {
       const job = await enqueueJob({ workspaceId: row.workspaceId, kind: "check", key: `check:${row.check.id}`,
         payload: { checkId: row.check.id } }, tx);
       if (job) queued++;
-      await tx.update(checks).set({ nextCheckAt: new Date(Date.now() + row.check.intervalSeconds * 1000) }).where(eq(checks.id, row.check.id));
+      const slot = slots?.get(row.check.id);
+      if (slot) await tx.update(checks).set({ nextCheckAt: nextCheckSlot(slot, new Date()) }).where(eq(checks.id, row.check.id));
     }
     return queued;
   });

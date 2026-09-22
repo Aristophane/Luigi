@@ -5,11 +5,6 @@ import { eq } from "drizzle-orm";
 import { db, closeDatabase } from "@/db";
 import { jobs } from "@/db/schema";
 import { claimJob, failJob, jobBudgets, type JobKind } from "@/lib/job-queue";
-import { runHttpCheck } from "@/lib/http-monitor";
-import { scanStoredApplication } from "@/lib/application-scanner";
-import { deliverNotification } from "@/lib/notification-worker";
-import { processAgentReport } from "@/lib/report-processing";
-import { pulseWorker, schedulerTick } from "@/lib/monitor-scheduler";
 
 const childId = process.argv[2];
 if (childId) {
@@ -17,16 +12,26 @@ if (childId) {
     const [job] = await db.select().from(jobs).where(eq(jobs.id, childId));
     if (!job || job.status !== "running" || job.lockToken !== process.argv[3]) throw new Error("JOB_LEASE_LOST");
     try {
-      if (job.kind === "check") await runHttpCheck(job.payload.checkId, job);
-      else if (job.kind === "scan") await scanStoredApplication(job.workspaceId, job.payload.applicationId, job);
-      else if (job.kind === "report") await processAgentReport(job);
-      else if (job.kind === "notification") await deliverNotification(job);
+      if (job.kind === "check") {
+        const { runHttpCheck } = await import("@/lib/http-monitor");
+        await runHttpCheck(job.payload.checkId, job);
+      } else if (job.kind === "scan") {
+        const { scanStoredApplication } = await import("@/lib/application-scanner");
+        await scanStoredApplication(job.workspaceId, job.payload.applicationId, job);
+      } else if (job.kind === "report") {
+        const { processAgentReport } = await import("@/lib/report-processing");
+        await processAgentReport(job);
+      } else if (job.kind === "notification") {
+        const { deliverNotification } = await import("@/lib/notification-worker");
+        await deliverNotification(job);
+      }
     } catch (error) {
       await failJob(job, error instanceof Error ? error.name + ": " + error.message.slice(0, 100) : "Job failed");
       process.exitCode = 1;
     }
   } finally { await closeDatabase(); }
 } else {
+  const { pulseWorker, schedulerTick } = await import("@/lib/monitor-scheduler");
   let stopping = false;
   const children = new Set<ReturnType<typeof spawn>>();
   const stop = () => { stopping = true; for (const child of children) child.kill("SIGKILL"); };
@@ -42,7 +47,8 @@ if (childId) {
             { stdio: "inherit", windowsHide: true });
           children.add(child);
           const timer = setTimeout(() => child.kill("SIGKILL"), jobBudgets[kind].timeoutSeconds * 1000);
-          // Process isolation bounds CPU, networking and execution time. Lease expiry resumes killed jobs.
+          // Isolation enforces the execution deadline. Queue budgets bound concurrency;
+          // this is not a CPU quota. Lease expiry resumes killed jobs.
           child.once("exit", () => { clearTimeout(timer); children.delete(child); });
           child.once("error", () => { clearTimeout(timer); children.delete(child); });
         }

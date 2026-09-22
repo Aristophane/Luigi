@@ -1,4 +1,4 @@
-// Node runtime for the worker and tests, using the project's existing TypeScript compiler.
+// TypeScript loader for development and tests only. Production runs the compiled worker.
 import { registerHooks } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
