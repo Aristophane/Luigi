@@ -20,7 +20,7 @@ type GitHubRepository = {
   archived: boolean;
   html_url: string;
 };
-type GitHubBranch = { commit: { sha: string; commit: { tree: { sha: string } } } };
+type GitHubBranch = { commit: { sha: string; commit: { message: string; tree: { sha: string } } } };
 type GitHubContentEntry = {
   name: string;
   path: string;
@@ -130,6 +130,7 @@ export async function inspectGitHubRepository(repository: string, branch: string
   return {
     metadata,
     commitSha: branchDetails.commit.sha,
+    commitMessage: branchDetails.commit.commit.message,
     rootContents: repositoryFiles.filter((entry) => !entry.path.includes("/")),
     repositoryFiles,
   };

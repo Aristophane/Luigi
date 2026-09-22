@@ -37,17 +37,15 @@ export function VpsAgentSetup({
   const [copied, setCopied] = useState<"primary" | "fallback" | null>(null);
   const [expired, setExpired] = useState(false);
   const activeEndpoint = state.endpoint ?? endpoint;
+  const enrollmentRedeemed = Boolean(
+    state.issuedAt && enrolledAt && new Date(enrolledAt) >= new Date(state.issuedAt),
+  );
   const waitingForNewReport = !expired && Boolean(
     state.installCommand
     && state.issuedAt
-    && (!lastSyncedAt || new Date(lastSyncedAt) <= new Date(state.issuedAt)),
+    && (!enrollmentRedeemed || !lastSyncedAt || new Date(lastSyncedAt) <= new Date(state.issuedAt)),
   );
-  const enrollmentRedeemed = Boolean(
-    state.issuedAt
-    && enrolledAt
-    && new Date(enrolledAt) >= new Date(state.issuedAt),
-  );
-  const installationComplete = Boolean(state.installCommand && !waitingForNewReport);
+  const installationComplete = Boolean(state.installCommand && enrollmentRedeemed && !waitingForNewReport);
 
   useEffect(() => {
     if (!waitingForNewReport) return;
@@ -165,8 +163,8 @@ export function VpsAgentSetup({
             <div className="agent-setup__action-heading">
               <KeyRound aria-hidden="true" />
               <span>
-                <strong>{configured ? "Préparer une réinstallation" : "Prêt en moins de deux minutes"}</strong>
-                <small>{configured ? "L’agent actuel reste valide jusqu’à l’exécution de la nouvelle commande." : "Ubuntu et Debian sont détectés automatiquement."}</small>
+                <strong>{configured ? "Relier un autre serveur" : "Prêt en moins de deux minutes"}</strong>
+                <small>{configured ? "Les agents déjà enregistrés conservent leur identité et leur accès." : "Ubuntu et Debian sont détectés automatiquement."}</small>
               </span>
             </div>
             <details className="agent-details agent-details--compact">

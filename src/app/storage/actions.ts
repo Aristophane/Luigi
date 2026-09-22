@@ -44,16 +44,19 @@ export async function createStorageMaintenance(formData: FormData) {
   const parsedApplicationId = z.union([z.string().uuid(), z.literal("")]).safeParse(formData.get("applicationId") ?? "");
   if (!parsedKey.success) return;
   const { session, workspaceId } = await requireWorkspace();
+  const serverId = z.uuid().safeParse(parsedKey.data.slice(0, 36));
+  const resourceKey = serverId.success ? parsedKey.data.slice(37) : parsedKey.data;
   const [snapshotRow] = await db.select({ payload: vpsStorageSnapshots.payload }).from(vpsStorageSnapshots)
-    .where(eq(vpsStorageSnapshots.workspaceId, workspaceId)).orderBy(desc(vpsStorageSnapshots.observedAt)).limit(1);
+    .where(and(eq(vpsStorageSnapshots.workspaceId, workspaceId), serverId.success ? eq(vpsStorageSnapshots.serverId, serverId.data) : isNull(vpsStorageSnapshots.serverId)))
+    .orderBy(desc(vpsStorageSnapshots.observedAt)).limit(1);
   const parsedSnapshot = storageSnapshotSchema.safeParse(snapshotRow?.payload);
   if (!parsedSnapshot.success) return;
-  const item = parsedSnapshot.data.categories.flatMap((category) => category.items).find((candidate) => candidate.key === parsedKey.data);
+  const item = parsedSnapshot.data.categories.flatMap((category) => category.items).find((candidate) => candidate.key === resourceKey);
   if (!item) return;
 
   const [mapping] = await db.select({ applicationId: storageResourceMappings.applicationId }).from(storageResourceMappings).where(and(
     eq(storageResourceMappings.workspaceId, workspaceId),
-    eq(storageResourceMappings.resourceKey, item.key),
+    eq(storageResourceMappings.resourceKey, parsedKey.data),
   )).limit(1);
   const requestedApplicationId = parsedApplicationId.success && parsedApplicationId.data ? parsedApplicationId.data : null;
   let applicationId = mapping?.applicationId ?? requestedApplicationId;

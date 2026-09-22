@@ -1,5 +1,5 @@
 import { Dashboard } from "@/components/dashboard";
-import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
   applications as applicationsTable,
@@ -7,6 +7,8 @@ import {
   dependencies as dependenciesTable,
   deployments,
   integrations,
+  agents,
+  servers,
   maintenanceTasks as maintenanceTasksTable,
   notifications as notificationsTable,
   observations,
@@ -16,7 +18,11 @@ import {
 import { requireWorkspace } from "@/lib/dal";
 import { compareDependencyGroups, groupDependencies, technologyDependency } from "@/lib/dependency-groups";
 import type { ActivityEvent, DashboardNotification, HealthStatus, MaintenanceTask, MonitoredApplication, ServerMetric, VpsOverview } from "@/lib/domain";
-import { vpsReportSchema } from "@/lib/vps-report";
+import { runtimeObservationState, vpsReportSchema } from "@/lib/vps-report";
+
+import { aggregateHealth, isFresh } from "@/lib/monitoring-state";
+import { applicationCoverage } from "@/lib/coverage";
+import { readiness } from "@/lib/readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +32,7 @@ function deploymentSourceLabel(source: string) {
 
 export default async function Home() {
   const { session, workspaceId } = await requireWorkspace();
+  const renderedAt = new Date();
   const allPersistedApplications = await db
     .select()
     .from(applicationsTable)
@@ -55,27 +62,11 @@ export default async function Home() {
       .where(inArray(deployments.applicationId, applicationIds))
       .orderBy(deployments.applicationId, desc(deployments.deployedAt))
     : [];
-  const uptimeMetrics = applicationIds.length > 0
-    ? await db
-      .select({
-        applicationId: checks.applicationId,
-        uptime30d: sql<number>`round(
-          100.0 * count(*) filter (where ${observations.status} in ('healthy', 'warning'))
-          / nullif(count(*), 0),
-          2
-        )`.mapWith(Number),
-      })
-      .from(observations)
-      .innerJoin(checks, eq(checks.id, observations.checkId))
-      .where(and(
-        inArray(checks.applicationId, applicationIds),
-        sql`${observations.observedAt} >= now() - interval '30 days'`,
-      ))
-      .groupBy(checks.applicationId)
-    : [];
+  const uptimeMetrics = await applicationCoverage(workspaceId);
   const latestObservations = applicationIds.length > 0
     ? await db
-      .selectDistinctOn([checks.applicationId], {
+      .selectDistinctOn([checks.id], {
+        checkId: checks.id,
         applicationId: checks.applicationId,
         latencyMs: observations.latencyMs,
         status: observations.status,
@@ -85,12 +76,19 @@ export default async function Home() {
       .from(observations)
       .innerJoin(checks, eq(checks.id, observations.checkId))
       .where(inArray(checks.applicationId, applicationIds))
-      .orderBy(checks.applicationId, desc(observations.observedAt))
+      .orderBy(checks.id, desc(observations.observedAt))
     : [];
   const httpChecks = applicationIds.length > 0
     ? await db
       .select({
+        id: checks.id,
         applicationId: checks.applicationId,
+        status: checks.status,
+        lastCheckedAt: checks.lastCheckedAt,
+        intervalSeconds: checks.intervalSeconds,
+        enabled: checks.enabled,
+        essential: checks.essential,
+        kind: checks.kind,
         renderingUrl: checks.renderingUrl,
         expectedText: checks.expectedText,
         assetProbe: checks.assetProbe,
@@ -99,7 +97,6 @@ export default async function Home() {
       .from(checks)
       .where(and(
         inArray(checks.applicationId, applicationIds),
-        eq(checks.kind, "http"),
         eq(checks.enabled, true),
       ))
     : [];
@@ -108,30 +105,13 @@ export default async function Home() {
     .from(integrations)
     .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "github")))
     .limit(1);
-  const [vpsAgent] = await db
-    .select({
-      label: integrations.label,
-      lastSyncedAt: integrations.lastSyncedAt,
-      configuration: integrations.configuration,
-    })
-    .from(integrations)
-    .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "vps_agent")))
-    .limit(1);
-  const [latestVpsSample] = await db
-    .select({
-      hostname: vpsMetricSamples.hostname,
-      cpuPercent: vpsMetricSamples.cpuPercent,
-      memoryPercent: vpsMetricSamples.memoryPercent,
-      diskPercent: vpsMetricSamples.diskPercent,
-      swapPercent: vpsMetricSamples.swapPercent,
-      payload: vpsMetricSamples.payload,
-      observedAt: vpsMetricSamples.observedAt,
-      ageSeconds: sql<number>`greatest(0, extract(epoch from (now() - ${vpsMetricSamples.observedAt})))`.mapWith(Number),
-    })
-    .from(vpsMetricSamples)
-    .where(eq(vpsMetricSamples.workspaceId, workspaceId))
-    .orderBy(desc(vpsMetricSamples.observedAt))
-    .limit(1);
+  const registeredAgents = await db.select({ id: agents.id, serverId: servers.id, label: servers.label,
+    lastSyncedAt: agents.lastSeenAt, configuration: agents.configuration, intervalSeconds: agents.intervalSeconds })
+    .from(agents).innerJoin(servers, eq(servers.id, agents.serverId))
+    .where(and(eq(servers.workspaceId, workspaceId), eq(agents.enabled, true))).orderBy(servers.createdAt);
+  const latestVpsSamples = await db.selectDistinctOn([vpsMetricSamples.serverId]).from(vpsMetricSamples)
+    .where(eq(vpsMetricSamples.workspaceId, workspaceId)).orderBy(vpsMetricSamples.serverId, desc(vpsMetricSamples.observedAt));
+  const monitoringReady = await readiness();
   const persistedTasks = await db
     .select()
     .from(maintenanceTasksTable)
@@ -201,25 +181,33 @@ export default async function Home() {
 
   const applications: MonitoredApplication[] = persistedApplications.map((application) => {
     const uptime = uptimeMetrics.find((metric) => metric.applicationId === application.id);
-    const latest = latestObservations.find((observation) => observation.applicationId === application.id);
-    const httpCheck = httpChecks.find((check) => check.applicationId === application.id);
+    const applicationChecks = httpChecks.filter((check) => check.applicationId === application.id);
+    const httpCheck = applicationChecks.find((check) => check.kind === "http");
+    const latest = latestObservations.find((observation) => observation.checkId === httpCheck?.id);
+    const status = aggregateHealth(applicationChecks);
+    const fresh = Boolean(httpCheck && isFresh(httpCheck.lastCheckedAt, httpCheck.intervalSeconds));
     const productionDeployment = latestDeployments.find((deployment) => deployment.applicationId === application.id);
     const applicationDependencies = persistedDependencies.filter((dependency) => dependency.applicationId === application.id);
     return {
       id: application.id,
       name: application.name,
       environment: application.environment,
-      status: application.status,
+      status,
+      coverage30d: uptime?.coverage30d ?? 0,
+      collectionGaps: uptime?.collectionGaps ?? 0,
+      missingMinutes: uptime?.missingMinutes ?? 0,
+      staleChecks: applicationChecks.filter((check) => check.essential && !isFresh(check.lastCheckedAt, check.intervalSeconds)).length,
       url: application.publicUrl,
       githubRepository: application.githubRepository,
       githubBranch: application.githubBranch,
       repositoryCommit: application.repositoryCommit ?? undefined,
+      repositoryCommitMessage: application.repositoryCommitMessage ?? undefined,
       uptime30d: uptime?.uptime30d ?? null,
-      latencyMs: latest?.latencyMs ?? null,
+      latencyMs: fresh ? latest?.latencyMs ?? null : null,
       lastCheckLabel: latest?.observedAt
         ? latest.observedAt.toLocaleString("fr-FR")
         : "En attente",
-      lastCheckStatus: latest?.status ?? "unknown",
+      lastCheckStatus: fresh ? latest?.status ?? "unknown" : "unknown",
       lastCheckDetail: latest?.detail ?? undefined,
       lastRepositoryScanLabel: application.lastRepositoryScannedAt
         ? application.lastRepositoryScannedAt.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
@@ -334,6 +322,8 @@ export default async function Home() {
       timeLabel: event.timeLabel,
       status: event.status,
     }));
+  function buildVpsOverview(vpsAgent?: typeof registeredAgents[number]): VpsOverview {
+  const latestVpsSample = latestVpsSamples.find((sample) => sample.serverId === vpsAgent?.serverId);
   const parsedVpsReport = latestVpsSample ? vpsReportSchema.safeParse(latestVpsSample.payload) : null;
   const vpsPayload = parsedVpsReport?.success ? parsedVpsReport.data : null;
   const metricStatus = (value: number, warning: number, critical: number): HealthStatus => value >= critical
@@ -382,18 +372,16 @@ export default async function Home() {
       : vpsMetrics.length > 0
         ? "healthy"
         : "unknown";
-  const configuredRefreshSeconds = typeof vpsAgent?.configuration.reportIntervalSeconds === "number"
-    ? vpsAgent.configuration.reportIntervalSeconds
-    : 300;
+  const configuredRefreshSeconds = vpsAgent?.intervalSeconds ?? 300;
   const refreshIntervalSeconds = Math.max(60, Math.min(configuredRefreshSeconds, 86_400));
   const reportAgeSeconds = latestVpsSample
-    ? Math.round(latestVpsSample.ageSeconds)
+    ? Math.max(0, Math.round((renderedAt.getTime() - latestVpsSample.observedAt.getTime()) / 1000))
     : null;
   const freshnessStatus: VpsOverview["freshnessStatus"] = reportAgeSeconds === null
     ? "unknown"
     : reportAgeSeconds <= refreshIntervalSeconds + 60
       ? "fresh"
-      : reportAgeSeconds <= refreshIntervalSeconds * 3
+      : reportAgeSeconds <= refreshIntervalSeconds * 2 + 60
         ? "late"
         : "silent";
   const durationLabel = (seconds: number) => seconds < 90
@@ -409,10 +397,13 @@ export default async function Home() {
   const recentRuntimeEvents = runtime?.collectedAt
     ? runtime.events.filter((event) => Date.parse(event.occurredAt) >= runtimeWindowStart)
     : [];
+  const runtimeState = runtimeObservationState(runtime, new Date());
+  const stale = freshnessStatus === "silent" || freshnessStatus === "unknown";
   const vpsOverview: VpsOverview = {
+    serverId: vpsAgent?.serverId,
     configured: Boolean(vpsAgent),
     connected: freshnessStatus === "fresh",
-    status: freshnessStatus === "late" || freshnessStatus === "silent" ? "warning" : vpsMetricStatus,
+    status: stale ? "unknown" : freshnessStatus === "late" || runtimeState !== "complete" ? "warning" : vpsMetricStatus,
     hostname: latestVpsSample?.hostname,
     lastSeenLabel: latestVpsSample?.observedAt.toLocaleString("fr-FR") ?? "Aucun rapport reçu",
     refreshIntervalLabel: `Toutes les ${durationLabel(refreshIntervalSeconds)}`,
@@ -423,14 +414,17 @@ export default async function Home() {
         : `Attendu depuis ${durationLabel(Math.max(0, (reportAgeSeconds ?? refreshIntervalSeconds) - refreshIntervalSeconds))}`
       : "Après le premier rapport",
     freshnessStatus,
-    metrics: vpsMetrics,
+    metrics: vpsMetrics.map((metric) => ({ ...metric, status: stale ? "unknown" : metric.status })),
     availableUpdates: vpsPayload?.updates.available ?? 0,
     securityUpdates: vpsPayload?.updates.security ?? 0,
     rebootRequired: vpsPayload?.updates.rebootRequired ?? false,
     ufwActive: vpsPayload?.security.ufwActive ?? null,
     backupStatus: vpsPayload?.backup?.status ?? "unknown",
     runtime: {
-      collector: !runtime ? "missing" : runtime.collectedAt ? "fresh" : "silent",
+      collector: runtimeState === "absent" ? "missing" : runtimeState === "stale" ? "silent" : "fresh",
+      completeness: runtimeState,
+      omittedUnits: runtime?.completeness?.omittedUnits ?? 0,
+      omittedEvents: runtime?.completeness?.omittedEvents ?? 0,
       trackedUnits: runtime?.units.length ?? 0,
       oomKills24h: recentRuntimeEvents.filter((event) => event.type === "oom_kill").length,
       restarts24h: recentRuntimeEvents
@@ -438,6 +432,10 @@ export default async function Home() {
         .reduce((total, event) => total + (event.count ?? 1), 0),
     },
   };
+
+  return vpsOverview;
+  }
+  const vpsOverviews = registeredAgents.map(buildVpsOverview);
 
   return (
     <Dashboard
@@ -447,7 +445,10 @@ export default async function Home() {
       notifications={dashboardNotifications}
       unreadNotificationCount={unreadNotificationCount}
       activity={activity}
-      vps={vpsOverview}
+      vps={vpsOverviews[0] ?? buildVpsOverview()}
+      vpsServers={vpsOverviews}
+      monitoringReady={monitoringReady.ready}
+      dateLabel={renderedAt.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", weekday: "long", day: "numeric", month: "long" })}
       userName={session.user.name}
       githubIntegrationLabel={githubIntegration?.label}
     />

@@ -16,10 +16,11 @@ import {
 } from "@/db/schema";
 import { requireWorkspace } from "@/lib/dal";
 import { inspectNpmDependencies } from "@/lib/dependency-freshness";
-import { scanStoredApplication, syncDependencyFindings } from "@/lib/application-scanner";
+import { syncDependencyFindings } from "@/lib/application-scanner";
 import { GitHubApiError } from "@/lib/github";
 import { getGitHubToken } from "@/lib/github-integration";
-import { runHttpCheck, runWorkspaceHttpChecks } from "@/lib/http-monitor";
+import { enqueueChecks } from "@/lib/monitor-scheduler";
+import { enqueueJob } from "@/lib/job-queue";
 import { scanGitHubTechnologies } from "@/lib/technology-scanner";
 
 export type CreateApplicationState = {
@@ -36,14 +37,9 @@ export type RenderingCheckState = {
 
 export async function runMonitoringNow() {
   const { workspaceId } = await requireWorkspace();
-  const results = await runWorkspaceHttpChecks(workspaceId);
+  const queued = await enqueueChecks(workspaceId, true);
   revalidatePath("/");
-  return {
-    checked: results.length,
-    healthy: results.filter((result) => result.status === "healthy").length,
-    warning: results.filter((result) => result.status === "warning").length,
-    critical: results.filter((result) => result.status === "critical").length,
-  };
+  return { queued };
 }
 
 export async function markNotificationRead(notificationId: string) {
@@ -159,6 +155,7 @@ export async function createApplication(
           githubRepository: repository,
           githubBranch: parsed.data.branch,
           repositoryCommit: scan.commitSha,
+        repositoryCommitMessage: scan.commitMessage,
           lastRepositoryScannedAt: new Date(),
         })
         .returning({ id: applications.id });
@@ -451,12 +448,12 @@ export async function scanApplication(applicationId: string) {
   const { workspaceId } = await requireWorkspace();
 
   try {
-    const result = await scanStoredApplication(workspaceId, parsedId.data);
+    const [application] = await db.select({ id: applications.id }).from(applications)
+      .where(and(eq(applications.id, parsedId.data), eq(applications.workspaceId, workspaceId), isNull(applications.archivedAt)));
+    if (!application) return { status: "error" as const, message: "Application introuvable." };
+    await enqueueJob({ workspaceId, kind: "scan", key: 'scan:' + application.id, payload: { applicationId: application.id } });
     revalidatePath("/");
-    return {
-      status: "success" as const,
-      message: `${result.technologies} technologies, ${result.dependencies} dépendances, ${result.outdated} action à prévoir.`,
-    };
+    return { status: "success" as const, message: "Analyse mise en file. Le résultat apparaîtra automatiquement." };
   } catch (error) {
     if (error instanceof GitHubApiError && error.status === 404) {
       return { status: "error" as const, message: "Dépôt inaccessible. Vérifie la branche ou la connexion GitHub." };
@@ -520,19 +517,7 @@ export async function updateRenderingCheck(
     })
     .where(eq(checks.id, check.id));
 
-  let result: Awaited<ReturnType<typeof runHttpCheck>>;
-  try {
-    result = await runHttpCheck(check.id);
-  } catch {
-    revalidatePath("/");
-    return {
-      status: "warning",
-      message: "Réglages enregistrés. Le contrôle immédiat n’a pas pu s’exécuter ; il reprendra au prochain passage du planificateur.",
-    };
-  }
+  await enqueueJob({ workspaceId, kind: "check", key: 'check:' + check.id, payload: { checkId: check.id } });
   revalidatePath("/");
-  return {
-    status: result.status === "healthy" ? "success" : result.status === "warning" ? "warning" : "error",
-    message: `Réglages enregistrés. Résultat du contrôle : ${result.detail}`,
-  };
+  return { status: "success", message: "Réglages enregistrés. Contrôle mis en file d’exécution." };
 }

@@ -9,8 +9,12 @@ if (!databaseUrl) {
 }
 
 const client = postgres(databaseUrl, {
-  max: process.env.NODE_ENV === "production" ? 10 : 1,
+  max: 10,
+  connect_timeout: 5,
+  connection: { statement_timeout: 30000 },
   prepare: false,
 });
 
 export const db = drizzle({ client, schema });
+export type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+export const closeDatabase = () => client.end({ timeout: 5 });

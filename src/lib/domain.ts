@@ -59,6 +59,11 @@ export interface MonitoredApplication {
   githubRepository: string;
   githubBranch: string;
   repositoryCommit?: string;
+  repositoryCommitMessage?: string;
+  coverage30d?: number;
+  missingMinutes?: number;
+  collectionGaps?: number;
+  staleChecks?: number;
   uptime30d: number | null;
   latencyMs: number | null;
   lastCheckLabel: string;
@@ -81,6 +86,7 @@ export interface ServerMetric {
 }
 
 export interface VpsOverview {
+  serverId?: string;
   configured: boolean;
   connected: boolean;
   status: HealthStatus;
@@ -98,6 +104,9 @@ export interface VpsOverview {
   backupStatus: "ok" | "failed" | "unknown";
   runtime: {
     collector: "fresh" | "silent" | "missing";
+    completeness?: "complete" | "partial" | "absent" | "stale";
+    omittedUnits?: number;
+    omittedEvents?: number;
     trackedUnits: number;
     oomKills24h: number;
     restarts24h: number;

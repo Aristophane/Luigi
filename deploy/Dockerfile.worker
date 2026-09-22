@@ -1,0 +1,19 @@
+FROM node:24-bookworm-slim
+
+WORKDIR /app
+
+# The runtime loader imports TypeScript, which is a devDependency.
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+
+COPY scripts ./scripts
+COPY src ./src
+COPY drizzle ./drizzle
+COPY tsconfig.json ./
+
+ENV NODE_ENV=production
+USER node
+
+# One worker resource owns migrations. Stop old web/worker processes before
+# deploying a schema change; see docs/deployment-coolify.md.
+CMD ["sh", "-c", "node scripts/migrate.mjs && exec node --import ./scripts/register.mjs src/worker.ts"]

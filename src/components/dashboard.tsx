@@ -103,14 +103,21 @@ type DashboardProps = {
   unreadNotificationCount: number;
   activity: ActivityEvent[];
   vps: VpsOverview;
+  vpsServers?: VpsOverview[];
+  monitoringReady?: boolean;
+  dateLabel?: string;
   userName: string;
   githubIntegrationLabel?: string;
 };
 
-export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, unreadNotificationCount, activity, vps, userName, githubIntegrationLabel }: DashboardProps) {
+export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, unreadNotificationCount, activity, vps, vpsServers = [], monitoringReady, dateLabel, userName, githubIntegrationLabel }: DashboardProps) {
   const router = useRouter();
+  useEffect(() => {
+    const timer = window.setInterval(() => { if (!document.hidden) router.refresh(); }, 15000);
+    return () => window.clearInterval(timer);
+  }, [router]);
   const [theme, setTheme] = useState<Theme>("light");
-  const [lastRefresh, setLastRefresh] = useState("il y a 38 secondes");
+  const [lastRefresh, setLastRefresh] = useState("à l’ouverture");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pushState, setPushState] = useState<PushState>("idle");
   const [pushMessage, setPushMessage] = useState("");
@@ -199,9 +206,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
     setIsRefreshing(true);
     try {
       const result = await runMonitoringNow();
-      setLastRefresh(result.checked === 0
-        ? "— aucun contrôle configuré"
-        : `à l’instant · ${result.healthy}/${result.checked} sain${result.healthy > 1 ? "s" : ""}`);
+      setLastRefresh(result.queued === 0 ? "— contrôles déjà en file ou non configurés" : `${result.queued} contrôles mis en file`);
       router.refresh();
     } catch {
       setLastRefresh("— contrôle impossible");
@@ -267,7 +272,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
       ? "Un signal mérite ton attention."
       : overviewStatus === "healthy"
         ? "Les applications répondent normalement."
-        : "Les premiers contrôles sont en attente.";
+        : "L’état des applications reste à confirmer.";
   const overviewDescription = applications.length === 0
     ? "Ajoute une application pour démarrer la surveillance."
     : `${applications.filter((application) => application.status === "healthy").length} application${applications.length > 1 ? "s" : ""} saine${applications.length > 1 ? "s" : ""} sur ${applications.length}. Les incidents ne sont ouverts qu’après trois échecs consécutifs.`;
@@ -407,7 +412,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
         <main className="main-content" id="main-content">
           <header className="topbar">
             <div>
-              <p className="eyebrow">Mercredi 2 septembre</p>
+              <p className="eyebrow">{dateLabel ?? "Vue d’ensemble"}</p>
               <h1>Bonjour {userName.split(" ")[0]}.</h1>
             </div>
             <div className="topbar__actions">
@@ -469,6 +474,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
             </button>
           </section>
 
+          {monitoringReady === false && <p className="collection-warning" role="status">Supervision indisponible ou en retard. Les données affichées peuvent être périmées. <Link href="/settings/integrations#delivery-log">Voir le suivi</Link></p>}
           <section className="section applications-section" id="applications" aria-labelledby="applications-title">
               <div className="section-heading">
                 <div>
@@ -520,7 +526,8 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                         </div>
                       </div>
                       <div className="application-route__signals" aria-label={`État de ${application.name}`}>
-                        <span><small>Disponibilité</small><strong>{application.uptime30d === null ? "En attente" : `${application.uptime30d.toLocaleString("fr-FR")} %`}</strong></span>
+                        <span><small>Disponibilité mesurée</small><strong>{application.uptime30d === null ? "Inconnue" : `${application.uptime30d.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} %`}</strong></span>
+                        <span><small>Couverture · 30 j max.</small><strong>{(application.coverage30d ?? 0).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %</strong></span>
                         <span><small>Réponse</small><strong className={application.status === "warning" ? "metric-warning" : ""}>{application.latencyMs === null ? "En attente" : `${application.latencyMs} ms`}</strong></span>
                       </div>
                       <div className="application-route__actions">
@@ -540,6 +547,11 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                       </div>
                     </header>
 
+                    <div className="collection-coverage" role="note">
+                      <span>{application.staleChecks ? application.staleChecks + " contrôle(s) essentiel(s) sans mesure récente · état incomplet" : application.status === "unknown" ? "Mesures essentielles manquantes" : "Mesures récentes"}</span>
+                      <span>{application.collectionGaps ?? 0} interruption(s) · {application.missingMinutes ?? 0} min sans mesure</span>
+                      <small>La disponibilité porte sur le temps couvert, depuis l’activation de chaque contrôle, au maximum 30 jours. Les périodes sans mesure restent inconnues.</small>
+                    </div>
                     <div className="release-route" aria-label={`${application.name} : ${application.githubRepository}, commit ${application.repositoryCommit?.slice(0, 7) ?? "inconnu"}, vers ${deploymentEnvironment}, commit ${deployment?.shortCommit ?? "inconnu"}. ${releaseLabel}`}>
                       <div className="release-station release-station--repository">
                         <div className="release-station__label"><GitBranch aria-hidden="true" /><span>Dépôt</span></div>
@@ -547,7 +559,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                         <span className="release-station__branch">Branche {application.githubBranch}</span>
                         <a className="release-station__commit" href={repositoryCommitUrl} target="_blank" rel="noreferrer">
                           <GitCommitHorizontal aria-hidden="true" />
-                          <span><small>Dernier commit présent</small><strong>{application.repositoryCommit?.slice(0, 7) ?? "Non analysé"}</strong></span>
+                          <span><small>Dernier commit présent · {application.repositoryCommit?.slice(0, 7) ?? "Non analysé"}</small><strong className="commit-message" title={application.repositoryCommitMessage}>{application.repositoryCommitMessage?.split("\n")[0] ?? "Message disponible à la prochaine analyse"}</strong></span>
                         </a>
                         <small className="release-station__date">Observé · {application.lastRepositoryScanLabel}</small>
                       </div>
@@ -669,11 +681,12 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
 
           <div className="dashboard-grid">
 
-            <section className="section vps-section" id="vps" aria-labelledby="vps-title">
+            <div id="vps">
+            {(vpsServers.length ? vpsServers : [vps]).map((vps) => <section key={vps.serverId ?? "empty"} className="section vps-section" aria-label={vps.hostname ?? "VPS"}>
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Ubuntu 24.04</p>
-                  <h2 id="vps-title">VPS production</h2>
+                  <h2>{vps.hostname ?? "VPS à relier"}</h2>
                 </div>
                 <div className="section-heading__actions">
                   <StatusDot status={vps.status} />
@@ -710,6 +723,10 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                   <span><strong>Dernière donnée</strong><small>{vps.dataAgeLabel}</small></span>
                   <span><strong>Prochaine attendue</strong><small>{vps.nextReportLabel}</small></span>
                 </div>
+                <p className="collection-coverage">
+                  Collecte {({ complete: "complète", partial: "partielle", absent: "absente", stale: "obsolète" })[vps.runtime.completeness ?? "absent"]}
+                  {vps.runtime.completeness === "partial" && " · " + (vps.runtime.omittedUnits ?? 0) + " unités et " + (vps.runtime.omittedEvents ?? 0) + " événements omis (au minimum). Les autres données ne sont pas confirmées."}
+                </p>
                 <div className="vps-facts">
                   <span>
                     <ShieldCheck aria-hidden="true" />
@@ -723,7 +740,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                   </span>
                   <span className={`vps-fact--${vps.runtime.oomKills24h > 0
                     ? "critical"
-                    : vps.runtime.restarts24h > 0 || vps.runtime.collector !== "fresh" ? "warning" : "healthy"}`}
+                    : vps.runtime.restarts24h > 0 || vps.runtime.completeness !== "complete" ? "warning" : "healthy"}`}
                   >
                     <MemoryStick aria-hidden="true" />
                     <strong>
@@ -735,7 +752,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                             ? `${vps.runtime.oomKills24h} arrêt${vps.runtime.oomKills24h > 1 ? "s" : ""} mémoire`
                             : vps.runtime.restarts24h > 0
                               ? `${vps.runtime.restarts24h} redémarrage${vps.runtime.restarts24h > 1 ? "s" : ""}`
-                              : "Aucun arrêt"}
+                              : vps.runtime.completeness === "complete" ? "Aucun arrêt observé" : "Historique incomplet"}
                     </strong>
                     <small>
                       {vps.runtime.collector === "missing"
@@ -748,7 +765,8 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                 </div>
                 {vps.rebootRequired && <p className="vps-action-note"><RefreshCw aria-hidden="true" /> Redémarrage requis après mise à jour. Une tâche de maintenance a été créée.</p>}
               </>}
-            </section>
+            </section>)}
+            </div>
 
             <section className="section tasks-section" id="maintenance" aria-labelledby="tasks-title">
               <div className="section-heading">

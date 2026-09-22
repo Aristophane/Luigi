@@ -3476,3 +3476,22 @@ h3 {
   .maintenance-create__heading { align-items: start; flex-direction: column; }
   .maintenance-create__title, .maintenance-create__wide, .maintenance-create__footer { grid-column: auto; }
 }
+/* Evidence and collection health use the same restrained surfaces as the cockpit. */
+.release-station__commit .commit-message { overflow: visible; text-overflow: clip; overflow-wrap: anywhere; white-space: normal; line-height: 1.45; }
+.collection-coverage { display: flex; flex-wrap: wrap; gap: .4rem 1.5rem; margin: .75rem 0; font-size: .78rem; color: var(--text-secondary); }
+.collection-coverage small { flex-basis: 100%; line-height: 1.5; }
+.collection-warning { padding: 1rem; border: 1px solid currentColor; border-radius: .5rem; line-height: 1.6; }
+.server-registry, .delivery-log { margin: 2rem 0; }
+.server-registry__item, .delivery-log__entry { padding: 1rem 0; border-bottom: 1px solid var(--border-subtle); }
+.server-registry__item summary, .delivery-log__entry summary { display: flex; gap: .75rem; flex-wrap: wrap; justify-content: space-between; cursor: pointer; }
+.server-registry__item p, .delivery-log p, .delivery-log li { margin: .75rem 0; line-height: 1.6; }
+.essential-service-form { display: flex; align-items: end; gap: .75rem; flex-wrap: wrap; margin: 1rem 0; }
+.essential-service-form label { display: grid; gap: .5rem; flex: 1; min-width: 12rem; }
+.essential-service-form select { padding: .6rem; background: var(--surface-raised); color: inherit; border: 1px solid var(--border-subtle); border-radius: .3rem; max-width: 100%; }
+.essential-service-form small { flex-basis: 100%; }
+.server-tabs { display: flex; gap: 1rem; flex-wrap: wrap; padding: 1rem 0; }
+.server-tabs [aria-current="page"] { font-weight: 750; text-decoration: underline; text-underline-offset: .3rem; }
+@media (max-width: 640px) {
+  .essential-service-form label, .essential-service-form button { width: 100%; }
+  .application-route__signals { flex-wrap: wrap; }
+}

@@ -29,6 +29,15 @@ const runtimeEventSchema = z.object({
 });
 
 const runtimeSchema = z.object({
+  completeness: z.object({
+    units: z.enum(["complete", "partial"]),
+    events: z.enum(["complete", "partial"]),
+    omittedUnits: z.number().int().nonnegative(),
+    omittedEvents: z.number().int().nonnegative(),
+    errors: z.array(z.string().max(120)).max(20).default([]),
+    eventsSince: timestamp.nullable(),
+    selection: z.enum(["all", "explicit"]).default("all"),
+  }).optional(),
   oomKillsSinceBoot: z.number().int().nonnegative().nullable(),
   bootId: z.string().trim().max(64).nullable(),
   collectedAt: timestamp.nullable(),
@@ -82,3 +91,27 @@ export const vpsReportSchema = z.object({
 
 export type VpsReport = z.infer<typeof vpsReportSchema>;
 export type VpsRuntime = z.infer<typeof runtimeSchema>;
+
+export function runtimeObservationState(runtime: VpsRuntime | undefined, now: Date) {
+  if (!runtime?.collectedAt) return "absent" as const;
+  const age = now.getTime() - Date.parse(runtime.collectedAt);
+  if (age < -60_000 || age > 15 * 60_000) return "stale" as const;
+  const complete = runtime.completeness;
+  return complete?.units === "complete" && complete.events === "complete"
+    && complete.omittedUnits === 0 && complete.omittedEvents === 0 && complete.errors.length === 0
+    ? "complete" as const : "partial" as const;
+}
+
+export function runtimeRecoveryProven(runtime: VpsRuntime, kind: "memory" | "crash", key: string, now: Date) {
+  const state = runtimeObservationState(runtime, now);
+  if (state === "absent" || state === "stale") return false;
+  const unit = runtime.units.find((unit) => unit.key === key);
+  if (!unit?.running) return false;
+  if (kind === "memory") return unit.memoryCurrentBytes !== null && unit.memoryMaxBytes !== null
+    && unit.memoryMaxBytes > 0 && unit.memoryCurrentBytes / unit.memoryMaxBytes < 0.8;
+  const coverage = runtime.completeness;
+  const windowStart = now.getTime() - 24 * 60 * 60_000;
+  return coverage?.events === "complete" && coverage.omittedEvents === 0 && coverage.errors.length === 0
+    && coverage.eventsSince !== null && Date.parse(coverage.eventsSince) <= windowStart
+    && !runtime.events.some((event) => event.unitKey === key && Date.parse(event.occurredAt) >= windowStart);
+}

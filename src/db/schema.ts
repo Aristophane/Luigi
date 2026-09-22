@@ -75,6 +75,7 @@ export const applications = pgTable(
     githubRepository: text("github_repository").notNull(),
     githubBranch: text("github_branch").default("main").notNull(),
     repositoryCommit: text("repository_commit"),
+    repositoryCommitMessage: text("repository_commit_message"),
     status: healthStatus("status").default("unknown").notNull(),
     lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
     lastRepositoryScannedAt: timestamp("last_repository_scanned_at", { withTimezone: true }),
@@ -198,6 +199,26 @@ export const vpsAgentEnrollments = pgTable(
   ],
 );
 
+export const servers = pgTable("servers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  hostname: text("hostname"),
+  ...timestamps,
+});
+
+export const agents = pgTable("agents", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  serverId: uuid("server_id").notNull().references(() => servers.id, { onDelete: "cascade" }),
+  tokenDigest: text("token_digest").notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  intervalSeconds: integer("interval_seconds").default(300).notNull(),
+  configuration: jsonb("configuration").$type<Record<string, unknown>>().default({}).notNull(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  lastProcessedAt: timestamp("last_processed_at", { withTimezone: true }),
+  ...timestamps,
+}, (table) => [uniqueIndex("agents_token_unique").on(table.tokenDigest)]);
+
 export const checks = pgTable(
   "checks",
   {
@@ -206,6 +227,12 @@ export const checks = pgTable(
       .notNull()
       .references(() => applications.id, { onDelete: "cascade" }),
     kind: checkKind("kind").default("http").notNull(),
+    serverId: uuid("server_id").references(() => servers.id, { onDelete: "cascade" }),
+    serviceKey: text("service_key"),
+    essential: boolean("essential").default(true).notNull(),
+    status: healthStatus("status").default("unknown").notNull(),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    nextCheckAt: timestamp("next_check_at", { withTimezone: true }).defaultNow().notNull(),
     target: text("target").notNull(),
     intervalSeconds: integer("interval_seconds").default(60).notNull(),
     timeoutSeconds: integer("timeout_seconds").default(10).notNull(),
@@ -245,6 +272,7 @@ export const findings = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     applicationId: uuid("application_id").references(() => applications.id, { onDelete: "cascade" }),
+    serverId: uuid("server_id").references(() => servers.id, { onDelete: "cascade" }),
     kind: findingKind("kind").notNull(),
     severity: taskSeverity("severity").notNull(),
     title: text("title").notNull(),
@@ -395,6 +423,11 @@ export const vpsMetricSamples = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     reportId: uuid("report_id").notNull(),
+    serverId: uuid("server_id").references(() => servers.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id").references(() => agents.id, { onDelete: "cascade" }),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    processingStatus: text("processing_status").default("pending").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
@@ -417,6 +450,7 @@ export const vpsStorageSnapshots = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     snapshotId: uuid("snapshot_id").notNull(),
+    serverId: uuid("server_id").references(() => servers.id, { onDelete: "cascade" }),
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
@@ -434,6 +468,52 @@ export const vpsStorageSnapshots = pgTable(
     index("vps_storage_snapshots_workspace_time_idx").on(table.workspaceId, table.observedAt),
   ],
 );
+
+export const jobs = pgTable("jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  key: text("key").notNull(),
+  serialKey: text("serial_key").notNull(),
+  payload: jsonb("payload").$type<Record<string, string>>().default({}).notNull(),
+  status: text("status").default("queued").notNull(),
+  attempts: integer("attempts").default(0).notNull(),
+  maxAttempts: integer("max_attempts").default(5).notNull(),
+  availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  lockToken: uuid("lock_token"),
+  lastError: text("last_error"),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("jobs_active_key_unique").on(table.key).where(sql`${table.status} in ('queued', 'running')`),
+  index("jobs_claim_idx").on(table.kind, table.status, table.availableAt),
+  index("jobs_serial_idx").on(table.serialKey, table.createdAt),
+]);
+
+export const notificationDeliveries = pgTable("notification_deliveries", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  notificationId: uuid("notification_id").notNull().references(() => notifications.id, { onDelete: "cascade" }),
+  channel: text("channel").notNull(),
+  recipient: text("recipient").notNull(),
+  status: text("status").default("queued").notNull(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  ...timestamps,
+}, (table) => [uniqueIndex("delivery_recipient_unique").on(table.notificationId, table.channel, table.recipient)]);
+
+export const deliveryAttempts = pgTable("delivery_attempts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  deliveryId: uuid("delivery_id").notNull().references(() => notificationDeliveries.id, { onDelete: "cascade" }),
+  attempt: integer("attempt").notNull(),
+  outcome: text("outcome").notNull(),
+  detail: text("detail"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const workerHeartbeats = pgTable("worker_heartbeats", {
+  name: text("name").primaryKey(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 export const storageResourceMappings = pgTable(
   "storage_resource_mappings",

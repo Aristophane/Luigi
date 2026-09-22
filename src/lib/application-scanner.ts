@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
+import { assertLease, completeJob, type Lease } from "@/lib/job-queue";
 import {
   applications,
   dependencies,
@@ -302,13 +303,13 @@ export async function syncDependencyFindings(
 async function sendDependencyNotifications(
   workspaceId: string,
   application: { id: string; name: string },
-  events: DependencyNotification[],
+  events: DependencyNotification[], transaction: Transaction,
 ) {
-  await Promise.allSettled(events.map((event) => {
+  for (const event of events) {
     const location = event.manifestPath === "package.json" ? "" : ` · ${event.manifestPath}`;
     const packages = event.packageCount > 1 ? ` pour ${event.packageCount} paquets` : "";
     if (event.kind === "update") {
-      return createOrRefreshNotification({
+      await createOrRefreshNotification({
         workspaceId,
         title: `Nouvelle version de ${event.label}`,
         body: event.currentVersion
@@ -318,18 +319,22 @@ async function sendDependencyNotifications(
         targetUrl: "/maintenance?category=dependency",
         fingerprint: event.fingerprint,
         push: event.updateKind === "major",
-      });
+      }, transaction);
+      continue;
     }
-    if (event.kind === "superseded") return resolveNotification(workspaceId, event.fingerprint);
-    return resolveNotification(workspaceId, event.fingerprint, {
+    if (event.kind === "superseded") {
+      await resolveNotification(workspaceId, event.fingerprint, undefined, transaction);
+      continue;
+    }
+    await resolveNotification(workspaceId, event.fingerprint, {
       title: `${event.label} est à jour`,
       body: `${application.name}${location} ne nécessite plus cette mise à jour.`,
       targetUrl: `/#application-${application.id}`,
-    });
-  }));
+    }, transaction);
+  }
 }
 
-export async function scanStoredApplication(workspaceId: string, applicationId: string) {
+export async function scanStoredApplication(workspaceId: string, applicationId: string, lease: Lease) {
   const [application] = await db
     .select()
     .from(applications)
@@ -375,10 +380,12 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
   const manifestDependencyKeys = new Set(scan.dependencies.map(dependencyKey));
 
   const sync = await db.transaction(async (transaction) => {
+    await assertLease(transaction, lease);
     await transaction
       .update(applications)
       .set({
         repositoryCommit: scan.commitSha,
+        repositoryCommitMessage: scan.commitMessage,
         lastRepositoryScannedAt: checkedAt,
         updatedAt: checkedAt,
       })
@@ -440,7 +447,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
       await transaction.delete(dependencies).where(eq(dependencies.id, storedDependency.id));
     }
 
-    return syncDependencyFindings(transaction, {
+    const sync = await syncDependencyFindings(transaction, {
       workspaceId,
       applicationId: application.id,
       freshness,
@@ -449,9 +456,10 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
       openNotificationFingerprints,
       checkedAt,
     });
+    await sendDependencyNotifications(workspaceId, application, sync.notificationEvents, transaction);
+    await completeJob(transaction, lease);
+    return sync;
   });
-
-  await sendDependencyNotifications(workspaceId, application, sync.notificationEvents);
 
   return {
     technologies: scan.technologies.length,

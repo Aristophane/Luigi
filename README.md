@@ -4,7 +4,7 @@ Luigi est un cockpit de supervision et de maintenance pour agréger la disponibi
 
 ## Démarrage local
 
-Prérequis : Node.js 20.9 ou plus récent et Docker Desktop.
+Prérequis : Node.js 24 LTS et Docker Desktop.
 
 ```bash
 npm install
@@ -15,11 +15,15 @@ npm run dev
 
 Ouvrir ensuite [http://localhost:3011](http://localhost:3011).
 
+Démarrer aussi **`npm run worker` dans un second terminal** : les contrôles, analyses, rapports et notifications utilisent désormais une file persistante. Sans ce processus, `/api/ready` et `/api/health` répondent 503. Pour une installation existante, suivre le [déploiement Coolify pas à pas](docs/deployment-coolify.md) ou le [guide de fiabilité](docs/reliability.md) pour une installation directe et le témoin externe.
+
 Au premier démarrage, Luigi redirige vers `/setup` pour créer l’unique compte administrateur de la V1. Les créations de compte suivantes sont refusées côté serveur. Copie `.env.example` vers `.env.local` si ce fichier n’existe pas et remplace impérativement `BETTER_AUTH_SECRET` hors développement local.
 
 ## Commandes
 
 - `npm run dev` : démarre l'application en développement ;
+- `npm run worker` : démarre le planificateur autonome et les quatre files de traitement ;
+- `npm test` : vérifie les règles et, avec `TEST_DATABASE_URL`, les transactions et reprises PostgreSQL ;
 - `npm run build` : produit la version de production ;
 - `npm run lint` : vérifie la qualité du code ;
 - `npm run typecheck` : vérifie les types TypeScript.
@@ -29,7 +33,7 @@ Au premier démarrage, Luigi redirige vers `/setup` pour créer l’unique compt
 
 ## Contrôles de disponibilité
 
-Chaque application reçoit un contrôle HTTP lors de sa création. Le bouton d’actualisation du cockpit exécute immédiatement les contrôles de l’espace courant. Les résultats conservent le statut HTTP, la latence, le détail normalisé et la date de collecte.
+Chaque application reçoit un contrôle HTTP lors de sa création. Le bouton d’actualisation du cockpit réserve les contrôles de l’espace courant ; le worker les exécute. Les résultats conservent le statut HTTP, la latence, le détail normalisé et la date de collecte. La couverture et les interruptions sont affichées séparément de la disponibilité mesurée ; un contrôle essentiel périmé rend l’état inconnu.
 
 Pour une exécution planifiée externe, configure `MONITOR_CRON_SECRET`, puis appelle régulièrement :
 
@@ -38,7 +42,7 @@ POST /api/cron/monitor
 Authorization: Bearer <MONITOR_CRON_SECRET>
 ```
 
-L’endpoint n’exécute que les contrôles arrivés à échéance. Une application passe en vigilance au premier échec ; un incident critique et une notification interne sont créés après trois échecs consécutifs. Le premier succès suivant résout automatiquement l’incident. Les redirections sont contrôlées et les adresses locales ou privées sont refusées afin de limiter les risques SSRF.
+Cet endpoint facultatif réserve les tâches arrivées à échéance et renvoie 202. Le worker planifie aussi les contrôles de façon autonome. Une application passe en vigilance au premier échec ; un incident critique et une notification interne sont créés après trois échecs consécutifs. Le premier succès suivant résout automatiquement cet incident. Les redirections sont contrôlées et les adresses locales ou privées sont refusées afin de limiter les risques SSRF.
 
 Le bloc **Contrôle du rendu** de chaque application ajoute des vérifications au contrôle HTTP, car une page peut répondre HTTP 200 alors que ses images ne se chargent plus. Elles s’appliquent à la **page à contrôler**, par exemple une fiche produit `/produits/jade`, ou à défaut à la page d’accueil ; la disponibilité reste mesurée sur la page d’accueil :
 
@@ -68,7 +72,7 @@ Content-Type: application/json
 }
 ```
 
-Le cockpit affiche le commit court, la date, la source et un accès au déploiement. Il indique aussi lorsque la branche analysée sur GitHub contient un commit plus récent que celui actuellement en production.
+Le cockpit affiche le commit court, son message pour la tête du dépôt, la date, la source et un accès au déploiement. Les dépôts déjà enregistrés récupèrent le message lors de leur prochaine analyse. Il indique aussi lorsque la branche analysée sur GitHub contient un commit plus récent que celui actuellement en production.
 
 ## Notifications Web Push
 
@@ -84,7 +88,7 @@ npx web-push generate-vapid-keys --json
 
 Chaque navigateur est enregistré séparément et peut être testé ou révoqué depuis le cockpit. Les souscriptions expirées sont nettoyées automatiquement. Les incidents critiques, alertes élevées, silences de collecte et retours à la normale peuvent alors être reçus lorsque Luigi n’est pas ouvert.
 
-`MONITOR_CRON_INTERVAL_SECONDS` doit correspondre à la fréquence réelle d’appel du cron. Luigi compare ce rythme à celui de l’agent VPS pour détecter qu’une source est devenue silencieuse sans générer de doublons.
+Le worker évalue les silences de chaque serveur toutes les dix secondes, même en l’absence de cron ou de rapports entrants. Un témoin sur une autre machine doit vérifier `/api/ready` pour détecter également l’arrêt complet de Luigi.
 
 ## Notifications Discord
 
@@ -95,6 +99,7 @@ Luigi y publie les mêmes événements que le Web Push : incidents critiques, al
 ## Documentation
 
 - [Spécification du module de monitoring](docs/monitoring.md)
+- [Worker, reprises, couverture et témoin externe](docs/reliability.md)
 - [Contexte de design](.impeccable.md)
 - [Installation de l’agent VPS](agent/README.md)
 

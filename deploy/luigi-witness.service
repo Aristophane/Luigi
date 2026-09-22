@@ -1,0 +1,15 @@
+[Unit]
+Description=Independent Luigi readiness witness (install on another host)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=true
+EnvironmentFile=/etc/luigi-witness.env
+ExecStart=/usr/bin/node /opt/luigi-witness/watchdog.mjs
+StateDirectory=luigi-witness
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

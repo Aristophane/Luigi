@@ -2,8 +2,10 @@ import "server-only";
 
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
+import { assertLease, completeJob, type Lease } from "@/lib/job-queue";
+import { aggregateHealth } from "@/lib/monitoring-state";
 import {
   applications,
   checks,
@@ -273,7 +275,7 @@ async function inspectRendering(check: RenderingCheck, homepage: { url: string; 
   }
 }
 
-export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
+export async function runHttpCheck(checkId: string, lease: Lease): Promise<HttpCheckResult> {
   const [configuration] = await db
     .select({
       checkId: checks.id,
@@ -346,6 +348,8 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
   const observedAt = new Date();
 
   await db.transaction(async (transaction) => {
+    await assertLease(transaction, lease);
+    await transaction.select({ id: applications.id }).from(applications).where(eq(applications.id, configuration.applicationId)).for("update");
     await transaction.insert(observations).values({
       checkId: configuration.checkId,
       status,
@@ -401,11 +405,11 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
       : status === "critical"
         ? "warning"
         : status;
-    await transaction
-      .update(applications)
-      .set({ status: applicationStatus, lastCheckedAt: observedAt, updatedAt: observedAt })
+    await transaction.update(checks).set({ status: applicationStatus, lastCheckedAt: observedAt, updatedAt: observedAt })
+      .where(eq(checks.id, configuration.checkId));
+    const siblings = await transaction.select().from(checks).where(eq(checks.applicationId, configuration.applicationId));
+    await transaction.update(applications).set({ status: aggregateHealth(siblings, observedAt), lastCheckedAt: observedAt })
       .where(eq(applications.id, configuration.applicationId));
-  });
 
   if (openedIncidentId) {
     await createOrRefreshNotification({
@@ -419,7 +423,7 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
       severity: "critical",
       targetUrl: `/#application-${configuration.applicationId}`,
       fingerprint: `availability:incident:${openedIncidentId}`,
-    });
+    }, transaction);
   }
   if (resolvedIncidentId) {
     await resolveNotification(configuration.workspaceId, `availability:incident:${resolvedIncidentId}`, {
@@ -430,8 +434,11 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
         ? `${detail} · page servie en ${latencyMs} ms. L’incident a été résolu automatiquement.`
         : `${detail} en ${latencyMs} ms. L’incident a été résolu automatiquement.`,
       targetUrl: `/#application-${configuration.applicationId}`,
-    });
+    }, transaction);
   }
+
+    await completeJob(transaction, lease);
+  });
 
   return {
     checkId: configuration.checkId,
@@ -443,28 +450,4 @@ export async function runHttpCheck(checkId: string): Promise<HttpCheckResult> {
     incidentOpened,
     incidentResolved,
   };
-}
-
-export async function runWorkspaceHttpChecks(workspaceId?: string, dueOnly = false) {
-  const predicates = [eq(checks.enabled, true), eq(checks.kind, "http"), isNull(applications.archivedAt)];
-  if (workspaceId) predicates.push(eq(applications.workspaceId, workspaceId));
-  if (dueOnly) {
-    predicates.push(or(
-      isNull(applications.lastCheckedAt),
-      sql`${applications.lastCheckedAt} <= now() - (${checks.intervalSeconds} * interval '1 second')`,
-    )!);
-  }
-  const configuredChecks = await db
-    .select({ id: checks.id })
-    .from(checks)
-    .innerJoin(applications, eq(applications.id, checks.applicationId))
-    .where(and(...predicates));
-
-  const results: HttpCheckResult[] = [];
-  for (let index = 0; index < configuredChecks.length; index += 4) {
-    results.push(...await Promise.all(
-      configuredChecks.slice(index, index + 4).map(({ id }) => runHttpCheck(id)),
-    ));
-  }
-  return results;
 }

@@ -25,7 +25,7 @@ export function getWebPushConfiguration() {
   };
 }
 
-async function sendStoredSubscription(
+export async function sendStoredSubscription(
   subscription: typeof pushSubscriptions.$inferSelect,
   payload: PushPayload,
 ) {
@@ -40,6 +40,7 @@ async function sendStoredSubscription(
     }, JSON.stringify({ ...payload, icon: "/icon.svg" }), {
       TTL: 60 * 60,
       urgency: "high",
+      timeout: 5000,
     });
     return { delivered: true };
   } catch (error) {

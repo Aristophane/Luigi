@@ -4,6 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "@/db";
 import { integrations } from "@/db/schema";
 import { DiscordIntegration } from "@/components/discord-integration";
+import { DeliveryLog } from "@/components/delivery-log";
 import { GitHubIntegrationForm } from "@/components/github-integration-form";
 import { requireWorkspace } from "@/lib/dal";
 import { isDiscordConfigured } from "@/lib/discord";
@@ -47,6 +48,7 @@ export default async function IntegrationsPage() {
           </div>
         </section>
         <DiscordIntegration configured={isDiscordConfigured()} />
+        <DeliveryLog workspaceId={workspaceId} />
         <aside className="security-note">
           <LockKeyhole aria-hidden="true" />
           <div><strong>Secret chiffré au repos</strong><p>Le jeton est protégé par AES-256-GCM avec une clé conservée exclusivement côté serveur.</p></div>

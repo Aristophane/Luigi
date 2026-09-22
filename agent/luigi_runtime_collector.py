@@ -22,6 +22,8 @@ MAX_UNITS = 40
 MAX_EVENTS = 50
 MAX_SERVICES = 20
 MAX_KERNEL_LINES = 5000
+MAX_STORED_EVENTS = 5000
+COLLECTION_ERRORS: list[str] = []
 
 CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 UNIT_NAME = re.compile(r"^[A-Za-z0-9@._:-]{1,120}$")
@@ -132,14 +134,19 @@ def docker_containers(collected_at: dt.datetime) -> list[dict[str, object]]:
     containers: list[dict[str, object]] = []
     try:
         entries = [entry for entry in os.scandir(DOCKER_CONTAINERS) if CONTAINER_ID.match(entry.name)]
+    except FileNotFoundError:
+        return containers
     except OSError:
+        COLLECTION_ERRORS.append("docker_inventory_unreadable")
         return containers
     for entry in entries:
         try:
             config = json.loads((pathlib.Path(entry.path) / "config.v2.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            COLLECTION_ERRORS.append("docker_metadata_unreadable")
             continue
         if not isinstance(config, dict):
+            COLLECTION_ERRORS.append("docker_metadata_invalid")
             continue
         state = config.get("State") if isinstance(config.get("State"), dict) else {}
         running = bool(state.get("Running")) or bool(state.get("Restarting"))
@@ -171,8 +178,11 @@ def docker_containers(collected_at: dt.datetime) -> list[dict[str, object]]:
 def systemd_services(boot: dt.datetime | None) -> list[dict[str, object]]:
     names = [name.strip() for name in os.environ.get("LUIGI_SERVICES", "").split(",") if name.strip()]
     services: list[dict[str, object]] = []
+    if len(names) > MAX_SERVICES:
+        COLLECTION_ERRORS.append("service_budget_exceeded")
     for name in names[:MAX_SERVICES]:
         if not UNIT_NAME.match(name):
+            COLLECTION_ERRORS.append("invalid_service_name")
             continue
         unit = name if "." in name else f"{name}.service"
         code, output = command(
@@ -182,9 +192,11 @@ def systemd_services(boot: dt.datetime | None) -> list[dict[str, object]]:
             "--property=LoadState,ActiveState,NRestarts,ControlGroup,ExecMainStartTimestampMonotonic",
         )
         if code != 0:
+            COLLECTION_ERRORS.append("service_unreadable")
             continue
         values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
         if values.get("LoadState") != "loaded":
+            COLLECTION_ERRORS.append("service_not_loaded")
             continue
         started_monotonic = values.get("ExecMainStartTimestampMonotonic", "0")
         started_at = None
@@ -210,9 +222,13 @@ def kernel_oom_kills(cursor: str | None) -> tuple[list[dict[str, object]], str |
     code, output = command(*arguments)
     if code != 0 and cursor:
         # Curseur illisible, par exemple après une rotation du journal : repartir d’une fenêtre courte.
+        COLLECTION_ERRORS.append("journal_cursor_lost")
         return kernel_oom_kills(None)
     if code != 0:
+        COLLECTION_ERRORS.append("journal_unreadable")
         return [], cursor
+    if len(output.splitlines()) >= MAX_KERNEL_LINES:
+        COLLECTION_ERRORS.append("journal_budget_exceeded")
 
     kills: list[dict[str, object]] = []
     rss_by_pid: dict[str, int] = {}
@@ -284,6 +300,7 @@ def load_state() -> dict[str, object]:
 
 def collect() -> tuple[dict[str, object], dict[str, object]]:
     collected_at = dt.datetime.now(dt.timezone.utc)
+    COLLECTION_ERRORS.clear()
     state = load_state()
     boot_id = BOOT_ID.read_text(encoding="utf-8").strip()
     # Au premier passage ou après un redémarrage du VPS, les compteurs servent de référence sans événement.
@@ -353,7 +370,13 @@ def collect() -> tuple[dict[str, object], dict[str, object]]:
             event["anonRssBytes"] = kill["anonRssBytes"]
         events.append(event)
     events.sort(key=lambda event: parse_iso(event.get("occurredAt")) or collected_at)
-    events = events[-MAX_EVENTS:]
+    dropped_now = max(0, len(events) - MAX_STORED_EVENTS)
+    loss_until = parse_iso(state.get("eventLossUntil"))
+    lost_events = int(state.get("lostEvents", 0)) if loss_until and loss_until > collected_at else 0
+    if dropped_now:
+        lost_events += dropped_now
+        loss_until = collected_at + EVENT_WINDOW
+    events = events[-MAX_STORED_EVENTS:]
 
     # Un même service compose peut avoir deux conteneurs pendant un déploiement : garder le plus récent.
     by_key: dict[str, dict[str, object]] = {}
@@ -386,13 +409,40 @@ def collect() -> tuple[dict[str, object], dict[str, object]]:
             "startedAt": iso(service["startedAt"]) if service["startedAt"] else None,
         })
 
+    selected = {key.strip() for key in os.environ.get("LUIGI_RUNTIME_UNITS", "").split(",") if key.strip()}
+    if selected:
+        units = [unit for unit in units if unit["key"] in selected]
+        if selected - {str(unit["key"]) for unit in units}:
+            COLLECTION_ERRORS.append("selected_unit_missing")
+    # Rotation bounds payload size while eventually observing every eligible unit.
+    offset = int(state.get("unitOffset", 0)) % max(1, len(units))
+    batch = (units[offset:] + units[:offset])[:MAX_UNITS]
+    services_requested = [name for name in os.environ.get("LUIGI_SERVICES", "").split(",") if name.strip()]
+    omitted_units = max(0, len(units) - len(batch)) + max(0, len(services_requested) - MAX_SERVICES)
+    omitted_events = max(0, len(events) - MAX_EVENTS) + lost_events
+    events_since = parse_iso(state.get("eventsSince")) or collected_at
+    if baseline_only or COLLECTION_ERRORS:
+        events_since = collected_at
     snapshot = {
+        "completeness": {
+            "units": "partial" if omitted_units or COLLECTION_ERRORS else "complete",
+            "events": "partial" if omitted_events or COLLECTION_ERRORS else "complete",
+            "omittedUnits": omitted_units,
+            "omittedEvents": omitted_events,
+            "eventsSince": iso(events_since),
+            "errors": sorted(set(COLLECTION_ERRORS))[:20],
+            "selection": "explicit" if selected else "all",
+        },
         "schemaVersion": 1,
         "collectedAt": iso(collected_at),
-        "units": units[:MAX_UNITS],
-        "events": events,
+        "units": batch,
+        "events": events[-MAX_EVENTS:],
     }
     next_state = {
+        "unitOffset": (offset + MAX_UNITS) % max(1, len(units)),
+        "eventsSince": iso(events_since),
+        "eventLossUntil": iso(loss_until) if loss_until else None,
+        "lostEvents": lost_events,
         "bootId": boot_id,
         "cursor": next_cursor,
         "containers": {

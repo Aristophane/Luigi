@@ -11,7 +11,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:prod": "node scripts/migrate.mjs",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "worker": "node --env-file-if-exists=.env.local --import ./scripts/register.mjs src/worker.ts",
+    "test": "node --import ./scripts/register.mjs --test tests/*.test.ts"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "5.3.0",

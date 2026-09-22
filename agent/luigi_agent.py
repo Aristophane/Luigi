@@ -148,10 +148,16 @@ def runtime_state() -> dict[str, object]:
     try:
         snapshot = json.loads(RUNTIME_SNAPSHOT.read_text(encoding="utf-8"))
         collected_at = dt.datetime.fromisoformat(snapshot["collectedAt"])
-        if dt.datetime.now(dt.timezone.utc) - collected_at <= RUNTIME_MAX_AGE:
+        runtime["collectedAt"] = snapshot["collectedAt"]
+        if dt.timedelta(0) <= dt.datetime.now(dt.timezone.utc) - collected_at <= RUNTIME_MAX_AGE:
             runtime["collectedAt"] = snapshot["collectedAt"]
             runtime["units"] = list(snapshot.get("units", []))[:40]
             runtime["events"] = list(snapshot.get("events", []))[-50:]
+            completeness = snapshot.get("completeness")
+            if isinstance(completeness, dict):
+                runtime["completeness"] = dict(completeness)
+                runtime["completeness"]["omittedUnits"] = int(completeness.get("omittedUnits", 0)) + max(0, len(snapshot.get("units", [])) - 40)
+                runtime["completeness"]["omittedEvents"] = int(completeness.get("omittedEvents", 0)) + max(0, len(snapshot.get("events", [])) - 50)
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return runtime

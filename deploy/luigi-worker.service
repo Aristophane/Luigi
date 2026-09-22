@@ -1,0 +1,22 @@
+[Unit]
+Description=Luigi persistent monitoring worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=luigi
+WorkingDirectory=/opt/luigi
+EnvironmentFile=/etc/luigi/worker.env
+ExecStart=/usr/bin/node --import ./scripts/register.mjs src/worker.ts
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

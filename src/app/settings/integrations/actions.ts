@@ -1,9 +1,25 @@
 "use server";
+import { and, eq } from "drizzle-orm";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { integrations } from "@/db/schema";
+import { integrations, notificationDeliveries, notifications } from "@/db/schema";
+import { enqueueJob } from "@/lib/job-queue";
+
+export async function retryDelivery(deliveryId: string) {
+  const { workspaceId } = await requireWorkspace();
+  await db.transaction(async (tx) => {
+    const [entry] = await tx.select({ delivery: notificationDeliveries }).from(notificationDeliveries)
+      .innerJoin(notifications, eq(notifications.id, notificationDeliveries.notificationId))
+      .where(and(eq(notificationDeliveries.id, deliveryId), eq(notifications.workspaceId, workspaceId)))
+      .for("update", { of: notificationDeliveries });
+    if (!entry || entry.delivery.status === "delivered") return;
+    const job = await enqueueJob({ workspaceId, kind: "notification", key: `delivery:${deliveryId}`, payload: { deliveryId } }, tx);
+    if (job) await tx.update(notificationDeliveries).set({ status: "queued" }).where(eq(notificationDeliveries.id, deliveryId));
+  });
+  revalidatePath("/settings/integrations");
+}
 import { requireWorkspace } from "@/lib/dal";
 import { isDiscordConfigured, sendDiscordAlert } from "@/lib/discord";
 import { GitHubApiError, verifyGitHubToken } from "@/lib/github";

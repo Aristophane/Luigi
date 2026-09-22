@@ -255,6 +255,7 @@ export async function scanGitHubTechnologies(repository: string, branch: string,
   return {
     repository: inspection.metadata,
     commitSha: inspection.commitSha,
+    commitMessage: inspection.commitMessage,
     technologies: [...detections.values()],
     dependencies: [...dependencies.values()],
   };
