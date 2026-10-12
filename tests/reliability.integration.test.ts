@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -119,6 +119,46 @@ test("PostgreSQL reliability: atomic outbox, lease fencing, report replay, isola
         assert.equal(manual.length, active.length);
         assert.ok(manual.every((job) => job.status === "queued" && job.availableAt >= requestedAt && job.availableAt <= new Date()));
       } finally { await db.delete(workspaces).where(eq(workspaces.id, fixture.id)); }
+    });
+    await t.test("token recovery bypasses failed-scan cooldown, resumes retries and preserves running leases", async () => {
+      const [fixture, other] = await db.insert(workspaces).values([{ name: "Token scan recovery" }, { name: "Other token workspace" }]).returning();
+      const { enqueueGitHubRepositoryScans } = await import("@/lib/github-integration");
+      try {
+        const tracked = await db.insert(applications).values(Array.from({ length: 5 }, (_, index) => ({
+          workspaceId: fixture.id, name: `Recovery ${index}`, publicUrl: `https://example.com/${index}`,
+          githubRepository: "test/test", lastRepositoryScannedAt: new Date("2026-10-03T00:00:00Z"),
+          archivedAt: index === 4 ? new Date() : null,
+        }))).returning();
+        await db.insert(applications).values({ workspaceId: other.id, name: "Other", publicUrl: "https://example.com/other", githubRepository: "test/test" });
+        const key = (index: number) => `scan:${tracked[index].id}`;
+        const lockToken = randomUUID();
+        await db.insert(jobs).values([
+          { workspaceId: fixture.id, kind: "scan", key: key(0), serialKey: key(0), payload: { applicationId: tracked[0].id },
+            status: "failed", attempts: 5, completedAt: new Date(), lastError: "GitHubApiError: Bad credentials" },
+          { workspaceId: fixture.id, kind: "scan", key: key(1), serialKey: key(1), payload: { applicationId: tracked[1].id },
+            status: "queued", attempts: 4, availableAt: new Date(Date.now() + 3600000), lastError: "GitHubApiError: Bad credentials" },
+          { workspaceId: fixture.id, kind: "scan", key: key(2), serialKey: key(2), payload: { applicationId: tracked[2].id },
+            status: "running", attempts: 2, lockedUntil: new Date(Date.now() + 600000), lockToken },
+        ]);
+        await assert.rejects(db.transaction(async (tx) => {
+          await enqueueGitHubRepositoryScans(fixture.id, tx);
+          throw new Error("credential transaction rollback");
+        }), /credential transaction rollback/);
+        assert.equal((await db.select().from(jobs).where(eq(jobs.workspaceId, fixture.id))).length, 3);
+        assert.equal(await enqueueGitHubRepositoryScans(fixture.id), 2);
+        assert.equal(await enqueueGitHubRepositoryScans(fixture.id), 0);
+        const active = await db.select().from(jobs).where(and(eq(jobs.workspaceId, fixture.id), inArray(jobs.status, ["queued", "running"])));
+        assert.equal(active.length, 4);
+        const retry = active.find((job) => job.key === key(1))!;
+        assert.equal(retry.attempts, 0);
+        assert.equal(retry.lastError, null);
+        assert.ok(retry.availableAt <= new Date());
+        const running = active.find((job) => job.key === key(2))!;
+        assert.equal(running.lockToken, lockToken);
+        assert.equal(running.attempts, 2);
+        assert.ok(active.every((job) => job.payload.applicationId !== tracked[4].id));
+        assert.equal((await db.select().from(jobs).where(eq(jobs.workspaceId, other.id))).length, 0);
+      } finally { await db.delete(workspaces).where(inArray(workspaces.id, [fixture.id, other.id])); }
     });
     await t.test("notification and delivery tasks roll back together", async () => {
       await assert.rejects(db.transaction(async (tx) => {

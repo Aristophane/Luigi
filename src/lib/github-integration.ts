@@ -1,16 +1,32 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { integrations } from "@/db/schema";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { db, type Database } from "@/db";
+import { applications, integrations, jobs } from "@/db/schema";
 import { decryptSecret } from "@/lib/secret-box";
 import { verifyGitHubToken } from "@/lib/github";
 import { gitHubTokenFailure, type GitHubTokenHealth } from "@/lib/github-token-health";
-import { assertLease, completeJob, type Lease } from "@/lib/job-queue";
+import { assertLease, completeJob, enqueueJob, type Lease } from "@/lib/job-queue";
 import { createOrRefreshNotification, resolveNotification } from "@/lib/notifications";
 
 class GitHubTokenDecryptionError extends Error {
   constructor() { super("GITHUB_TOKEN_DECRYPTION_FAILED"); }
+}
+
+// Credential recovery bypasses the normal scan cooldown, while retaining active-job deduplication.
+export async function enqueueGitHubRepositoryScans(workspaceId: string, database: Database = db) {
+  const tracked = await database.select({ id: applications.id }).from(applications)
+    .where(and(eq(applications.workspaceId, workspaceId), isNull(applications.archivedAt))).orderBy(applications.id);
+  let queued = 0;
+  for (const application of tracked) {
+    const key = `scan:${application.id}`;
+    // A queued retry can use the new token immediately and gets a fresh retry budget.
+    // Leave running leases intact: their next retry reads the current stored token.
+    await database.update(jobs).set({ availableAt: new Date(), attempts: 0, lastError: null, updatedAt: new Date() })
+      .where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.key, key), eq(jobs.status, "queued")));
+    if (await enqueueJob({ workspaceId, kind: "scan", key, payload: { applicationId: application.id } }, database)) queued++;
+  }
+  return queued;
 }
 
 async function getGitHubIntegration(workspaceId: string) {
@@ -47,6 +63,9 @@ async function recordHealth(integration: typeof integrations.$inferSelect, statu
         severity: "high", targetUrl: "/settings/integrations#github-integration", fingerprint, push: false }, tx);
     } else if (status === "valid") {
       await resolveNotification(integration.workspaceId, fingerprint, undefined, tx);
+      if (previous && ["invalid", "forbidden", "configuration_error", "unavailable"].includes(previous.status)) {
+        await enqueueGitHubRepositoryScans(integration.workspaceId, tx);
+      }
     }
   });
 }
