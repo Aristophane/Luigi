@@ -1,7 +1,8 @@
 import "server-only";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { applications, checks, jobs, workerHeartbeats, workspaces } from "@/db/schema";
+import { applications, checks, integrations, jobs, workerHeartbeats, workspaces } from "@/db/schema";
+import { githubTokenCheckIntervalMs } from "@/lib/github-token-health";
 import { enqueueJob } from "@/lib/job-queue";
 import { evaluateMonitoringSilences } from "@/lib/monitoring-heartbeats";
 import { checkSlots, nextCheckSlot } from "@/lib/check-schedule";
@@ -51,6 +52,7 @@ export async function scheduleMonitoring() {
 
 export async function schedulerTick() {
   await scheduleMonitoring();
+  await scheduleGitHubTokenChecks();
   const now = new Date();
   // Cached states become unknown even when no producer is sending data.
   await db.execute(sql`update checks set status = 'unknown' where enabled and status <> 'unknown'
@@ -59,6 +61,20 @@ export async function schedulerTick() {
     await evaluateMonitoringSilences(workspace.id, now);
   }
   await pulseWorker("scheduler");
+}
+
+export async function scheduleGitHubTokenChecks() {
+  const connected = await db.select().from(integrations).where(and(eq(integrations.kind, "github"), eq(integrations.enabled, true)));
+  let queued = 0;
+  for (const integration of connected) {
+    if (!integration.encryptedCredentials) continue;
+    const health = integration.configuration.githubTokenHealth as { checkedAt?: string } | undefined;
+    const checkedAt = health?.checkedAt ? Date.parse(health.checkedAt) : NaN;
+    if (Number.isFinite(checkedAt) && Date.now() - checkedAt < githubTokenCheckIntervalMs) continue;
+    if (await enqueueJob({ workspaceId: integration.workspaceId, kind: "scan", key: `github-token:${integration.id}`,
+      payload: { githubTokenCheck: "true" } })) queued++;
+  }
+  return queued;
 }
 
 export async function pulseWorker(name: string) {

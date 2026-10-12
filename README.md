@@ -76,7 +76,15 @@ Content-Type: application/json
 }
 ```
 
-Le cockpit affiche le commit court, son message pour la tête du dépôt, la date, la source et un accès au déploiement. Les dépôts déjà enregistrés récupèrent le message lors de leur prochaine analyse. Il indique aussi lorsque la branche analysée sur GitHub contient un commit plus récent que celui actuellement en production.
+Le cockpit affiche le commit court, son message pour la tête du dépôt, la date, la source et un accès au déploiement. Les dépôts déjà enregistrés récupèrent le message lors de leur prochaine analyse. Il compare la branche analysée sur GitHub au commit déclaré en production lorsque les observations sont assez récentes.
+
+### Validité du jeton GitHub
+
+Le worker vérifie le jeton enregistré toutes les heures, même sans dépôt surveillé. Les accès GitHub utilisés pour lister ou analyser les dépôts actualisent également son état. Le cockpit et **Paramètres → Intégrations** affichent la validité, la date du dernier contrôle et, en cas d’échec, le dernier accès réussi. **Vérifier le jeton** permet un contrôle immédiat sans ressaisir le secret.
+
+Un refus HTTP 401 signale un jeton invalide, potentiellement expiré ou révoqué ; un refus de permissions, une limitation de requêtes, une panne réseau et une erreur de chiffrement restent distingués. Une notification interne dédupliquée indique où intervenir ; l’enregistrement d’un nouveau jeton valide la résout. Aucune date d’expiration n’est déduite d’un simple refus. Les anciennes intégrations sont indiquées « à vérifier » jusqu’à leur premier contrôle.
+
+La comparaison des commits reste inconnue lorsque le jeton n’est pas confirmé, que l’observation du dépôt est antérieure au déploiement ou qu’elle date de plus de 25 heures. Une différence de SHA est affichée comme une différence entre dépôt et déploiement, sans présumer lequel est en avance. Cette évolution utilise la configuration JSON existante : reconstruire et redéployer **le web et le worker**, sans migration supplémentaire.
 
 ## Notifications Web Push
 

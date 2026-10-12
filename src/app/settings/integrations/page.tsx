@@ -8,15 +8,16 @@ import { DeliveryLog } from "@/components/delivery-log";
 import { GitHubIntegrationForm } from "@/components/github-integration-form";
 import { requireWorkspace } from "@/lib/dal";
 import { isDiscordConfigured } from "@/lib/discord";
+import { readGitHubTokenHealth } from "@/lib/github-token-health";
 
 export const dynamic = "force-dynamic";
 
 export default async function IntegrationsPage() {
   const { workspaceId } = await requireWorkspace();
   const [githubIntegration] = await db
-    .select({ label: integrations.label, lastSyncedAt: integrations.lastSyncedAt })
+    .select({ label: integrations.label, configuration: integrations.configuration })
     .from(integrations)
-    .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "github")))
+    .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "github"), eq(integrations.enabled, true)))
     .limit(1);
   const deploymentIngestionConfigured = Boolean(process.env.DEPLOYMENT_INGEST_SECRET);
 
@@ -29,7 +30,8 @@ export default async function IntegrationsPage() {
           <h1>Intégrations</h1>
           <p>Connecte uniquement les services que Luigi doit lire. Aucun jeton n’est renvoyé au navigateur après enregistrement.</p>
         </header>
-        <GitHubIntegrationForm connectedLabel={githubIntegration?.label} />
+        <GitHubIntegrationForm connectedLabel={githubIntegration?.label}
+          health={githubIntegration ? readGitHubTokenHealth(githubIntegration.configuration) : undefined} />
         <section className="integration-form" aria-labelledby="deployment-integration-title">
           <div className="integration-form__status">
             <span className="integration-icon"><GitCommitHorizontal aria-hidden="true" /></span>

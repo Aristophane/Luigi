@@ -24,6 +24,9 @@ import { requireWorkspace } from "@/lib/dal";
 import { isDiscordConfigured, sendDiscordAlert } from "@/lib/discord";
 import { GitHubApiError, verifyGitHubToken } from "@/lib/github";
 import { encryptSecret } from "@/lib/secret-box";
+import { checkStoredGitHubToken } from "@/lib/github-integration";
+import { githubTokenHealthCopy, readGitHubTokenHealth, type GitHubTokenHealth } from "@/lib/github-token-health";
+import { resolveNotification } from "@/lib/notifications";
 
 export type IntegrationActionState = {
   status: "idle" | "success" | "error";
@@ -45,6 +48,8 @@ export async function connectGitHub(
   try {
     const githubUser = await verifyGitHubToken(parsed.data);
     const encryptedCredentials = encryptSecret(parsed.data);
+    const checkedAt = new Date().toISOString();
+    const githubTokenHealth: GitHubTokenHealth = { status: "valid", checkedAt, lastSuccessfulAt: checkedAt };
     await db
       .insert(integrations)
       .values({
@@ -52,7 +57,7 @@ export async function connectGitHub(
         kind: "github",
         label: `GitHub · ${githubUser.login}`,
         encryptedCredentials,
-        configuration: { login: githubUser.login, authentication: "fine_grained_pat" },
+        configuration: { login: githubUser.login, authentication: "fine_grained_pat", githubTokenHealth },
         lastSyncedAt: new Date(),
       })
       .onConflictDoUpdate({
@@ -60,12 +65,15 @@ export async function connectGitHub(
         set: {
           label: `GitHub · ${githubUser.login}`,
           encryptedCredentials,
-          configuration: { login: githubUser.login, authentication: "fine_grained_pat" },
+          configuration: { login: githubUser.login, authentication: "fine_grained_pat", githubTokenHealth },
           enabled: true,
           lastSyncedAt: new Date(),
           updatedAt: new Date(),
         },
       });
+    const [integration] = await db.select({ id: integrations.id }).from(integrations)
+      .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "github")));
+    await resolveNotification(workspaceId, `github-token:${integration.id}`);
   } catch (error) {
     if (error instanceof GitHubApiError && (error.status === 401 || error.status === 403)) {
       return { status: "error", message: "GitHub a refusé ce jeton. Vérifie sa validité et ses permissions." };
@@ -97,6 +105,22 @@ export async function connectGitHub(
   revalidatePath("/settings/integrations");
   revalidatePath("/");
   return { status: "success", message: "GitHub est connecté en lecture seule." };
+}
+
+export async function verifyStoredGitHubToken(): Promise<IntegrationActionState> {
+  const { workspaceId } = await requireWorkspace();
+  try {
+    await checkStoredGitHubToken(workspaceId);
+    const [integration] = await db.select().from(integrations)
+      .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "github"), eq(integrations.enabled, true)));
+    if (!integration?.encryptedCredentials) return { status: "error", message: "Aucun jeton GitHub enregistré." };
+    const health = readGitHubTokenHealth(integration.configuration);
+    revalidatePath("/");
+    revalidatePath("/settings/integrations");
+    return { status: health.status === "valid" ? "success" : "error", message: githubTokenHealthCopy(health).message };
+  } catch {
+    return { status: "error", message: "La vérification du jeton n’a pas pu aboutir. Réessaie dans quelques instants." };
+  }
 }
 
 export async function sendDiscordTest(): Promise<IntegrationActionState> {

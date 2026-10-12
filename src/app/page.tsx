@@ -23,6 +23,7 @@ import { runtimeObservationState, vpsReportSchema } from "@/lib/vps-report";
 import { aggregateHealth, isFresh } from "@/lib/monitoring-state";
 import { applicationCoverage } from "@/lib/coverage";
 import { readiness } from "@/lib/readiness";
+import { readGitHubTokenHealth, repositoryDeploymentMatch } from "@/lib/github-token-health";
 
 export const dynamic = "force-dynamic";
 
@@ -101,10 +102,11 @@ export default async function Home() {
       ))
     : [];
   const [githubIntegration] = await db
-    .select({ label: integrations.label })
+    .select({ label: integrations.label, configuration: integrations.configuration })
     .from(integrations)
-    .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "github")))
+    .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.kind, "github"), eq(integrations.enabled, true)))
     .limit(1);
+  const githubTokenHealth = githubIntegration ? readGitHubTokenHealth(githubIntegration.configuration, renderedAt) : undefined;
   const registeredAgents = await db.select({ id: agents.id, serverId: servers.id, label: servers.label,
     lastSyncedAt: agents.lastSeenAt, configuration: agents.configuration, intervalSeconds: agents.intervalSeconds })
     .from(agents).innerJoin(servers, eq(servers.id, agents.serverId))
@@ -220,10 +222,8 @@ export default async function Home() {
         deployedAt: productionDeployment.deployedAt.toISOString(),
         source: productionDeployment.source,
         sourceUrl: productionDeployment.sourceUrl ?? undefined,
-        matchesRepositoryHead: application.repositoryCommit
-          ? application.repositoryCommit.startsWith(productionDeployment.commitSha)
-            || productionDeployment.commitSha.startsWith(application.repositoryCommit)
-          : null,
+        matchesRepositoryHead: repositoryDeploymentMatch(application.repositoryCommit, application.lastRepositoryScannedAt,
+          productionDeployment.commitSha, productionDeployment.deployedAt, githubTokenHealth, renderedAt),
       } : undefined,
       technologies: persistedTechnologies
         .filter((technology) => technology.applicationId === application.id)
@@ -438,6 +438,7 @@ export default async function Home() {
       renderedAt={renderedAt.toISOString()}
       userName={session.user.name}
       githubIntegrationLabel={githubIntegration?.label}
+      githubTokenHealth={githubTokenHealth}
     />
   );
 }

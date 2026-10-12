@@ -24,7 +24,7 @@ test("PostgreSQL reliability: atomic outbox, lease fencing, report replay, isola
   const { db, closeDatabase } = await import("@/db");
   const schema = await import("@/db/schema");
   const { workspaces, jobs, notificationDeliveries, deliveryAttempts, notifications, servers, agents,
-    vpsMetricSamples, findings, maintenanceTasks, applications, checks, observations, monitoringHeartbeats, workerHeartbeats } = schema;
+    vpsMetricSamples, findings, maintenanceTasks, applications, checks, observations, monitoringHeartbeats, workerHeartbeats, integrations } = schema;
   const queue = await import("@/lib/job-queue");
   const { createOrRefreshNotification } = await import("@/lib/notifications");
   const { deliverNotification } = await import("@/lib/notification-worker");
@@ -37,6 +37,61 @@ test("PostgreSQL reliability: atomic outbox, lease fencing, report replay, isola
   const fetchOriginal = globalThis.fetch;
   const oldWebhook = process.env.DISCORD_WEBHOOK_URL;
   try {
+    await t.test("GitHub checks persist invalid tokens, deduplicate alerts, recover and fence token replacement", async () => {
+      const [fixture] = await db.insert(workspaces).values({ name: "GitHub fixture" }).returning();
+      const oldKey = process.env.INTEGRATION_ENCRYPTION_KEY;
+      process.env.INTEGRATION_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
+      const { encryptSecret } = await import("@/lib/secret-box");
+      const { withGitHubToken, checkStoredGitHubToken } = await import("@/lib/github-integration");
+      const { verifyGitHubToken } = await import("@/lib/github");
+      const { scheduleGitHubTokenChecks } = await import("@/lib/monitor-scheduler");
+      try {
+        const [integration] = await db.insert(integrations).values({ workspaceId: fixture.id, kind: "github", label: "GitHub test",
+          encryptedCredentials: encryptSecret("fixture-token-old"), configuration: { login: "preserved" } }).returning();
+        await scheduleGitHubTokenChecks();
+        await scheduleGitHubTokenChecks();
+        const scheduled = await db.select().from(jobs).where(eq(jobs.key, `github-token:${integration.id}`));
+        assert.equal(scheduled.length, 1);
+        assert.equal(scheduled[0].payload.githubTokenCheck, "true");
+        let requests = 0;
+        globalThis.fetch = async () => { requests++; return Response.json({ message: "Bad credentials" }, { status: 401 }); };
+        await checkStoredGitHubToken(fixture.id);
+        await checkStoredGitHubToken(fixture.id);
+        assert.equal(requests, 2);
+        const [invalid] = await db.select().from(integrations).where(eq(integrations.id, integration.id));
+        assert.equal((invalid.configuration.githubTokenHealth as { status: string }).status, "invalid");
+        assert.equal(invalid.configuration.login, "preserved");
+        const alerts = await db.select().from(notifications).where(eq(notifications.workspaceId, fixture.id));
+        assert.equal(alerts.length, 1);
+        assert.equal(alerts[0].occurrenceCount, 1);
+        assert.equal((await db.select().from(notificationDeliveries).where(eq(notificationDeliveries.notificationId, alerts[0].id))).length, 0);
+        globalThis.fetch = async () => Response.json({ login: "test" });
+        await checkStoredGitHubToken(fixture.id);
+        assert.equal((await db.select().from(notifications).where(eq(notifications.id, alerts[0].id)))[0].resolvedAt instanceof Date, true);
+
+        let finishOldRequest!: (response: Response) => void;
+        let started!: () => void;
+        const oldStarted = new Promise<void>((resolve) => { started = resolve; });
+        globalThis.fetch = async () => { started(); return new Promise<Response>((resolve) => { finishOldRequest = resolve; }); };
+        const oldRequest = withGitHubToken(fixture.id, (token) => verifyGitHubToken(token!));
+        // Attach rejection handling before resolving the deferred request.
+        const oldFailure = assert.rejects(oldRequest, /Bad credentials/);
+        await oldStarted;
+        await db.update(integrations).set({ encryptedCredentials: encryptSecret("fixture-token-new") }).where(eq(integrations.id, integration.id));
+        globalThis.fetch = async () => Response.json({ login: "test" });
+        await checkStoredGitHubToken(fixture.id);
+        finishOldRequest(Response.json({ message: "Bad credentials" }, { status: 401 }));
+        await oldFailure;
+        const [replaced] = await db.select().from(integrations).where(eq(integrations.id, integration.id));
+        assert.equal((replaced.configuration.githubTokenHealth as { status: string }).status, "valid");
+        assert.equal((await db.select().from(notifications).where(eq(notifications.workspaceId, fixture.id))).length, 1);
+      } finally {
+        globalThis.fetch = fetchOriginal;
+        if (oldKey === undefined) delete process.env.INTEGRATION_ENCRYPTION_KEY;
+        else process.env.INTEGRATION_ENCRYPTION_KEY = oldKey;
+        await db.delete(workspaces).where(eq(workspaces.id, fixture.id));
+      }
+    });
     await t.test("existing synchronized checks spread out; manual checks preserve the schedule", async () => {
       const [fixture] = await db.insert(workspaces).values({ name: "Schedule fixture" }).returning();
       try {

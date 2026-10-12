@@ -1,5 +1,5 @@
 import { GitHubApiError, listGitHubRepositories } from "@/lib/github";
-import { getGitHubToken } from "@/lib/github-integration";
+import { withGitHubToken } from "@/lib/github-integration";
 import { requireWorkspace } from "@/lib/dal";
 
 const noStoreHeaders = { "Cache-Control": "private, no-store" };
@@ -8,15 +8,14 @@ export async function GET() {
   const { workspaceId } = await requireWorkspace();
 
   try {
-    const token = await getGitHubToken(workspaceId);
-    if (!token) {
+    const repositories = await withGitHubToken(workspaceId, (token) => token ? listGitHubRepositories(token) : Promise.resolve(undefined));
+    if (!repositories) {
       return Response.json(
         { message: "Connecte GitHub pour détecter les dépôts accessibles." },
         { status: 409, headers: noStoreHeaders },
       );
     }
 
-    const repositories = await listGitHubRepositories(token);
     return Response.json({ repositories }, { headers: noStoreHeaders });
   } catch (error) {
     if (error instanceof GitHubApiError && (error.status === 401 || error.status === 403)) {

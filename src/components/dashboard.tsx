@@ -52,6 +52,8 @@ import { ApplicationIcon } from "@/components/application-icon";
 import { RenderingCheckPanel } from "@/components/rendering-check-panel";
 import { ScanApplicationButton } from "@/components/scan-application-button";
 import { LocalDateTime } from "@/components/local-date-time";
+import { GitHubTokenStatus } from "@/components/github-token-status";
+import { githubTokenHealthCopy, type GitHubTokenHealth } from "@/lib/github-token-health";
 import type { ActivityEvent, DashboardNotification, GitHubRepositoryOption, MaintenanceTask, MonitoredApplication, VpsOverview } from "@/lib/domain";
 
 type Theme = "light" | "dark";
@@ -110,9 +112,10 @@ type DashboardProps = {
   renderedAt?: string;
   userName: string;
   githubIntegrationLabel?: string;
+  githubTokenHealth?: GitHubTokenHealth;
 };
 
-export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, unreadNotificationCount, activity, vps, vpsServers = [], monitoringReady, renderedAt, userName, githubIntegrationLabel }: DashboardProps) {
+export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, notifications, unreadNotificationCount, activity, vps, vpsServers = [], monitoringReady, renderedAt, userName, githubIntegrationLabel, githubTokenHealth }: DashboardProps) {
   const router = useRouter();
   useEffect(() => {
     const timer = window.setInterval(() => { if (!document.hidden) router.refresh(); }, 15000);
@@ -477,6 +480,10 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
           </section>
 
           {monitoringReady === false && <p className="collection-warning" role="status">Supervision indisponible ou en retard. Les données affichées peuvent être périmées. <Link href="/settings/integrations#delivery-log">Voir le suivi</Link></p>}
+          {githubTokenHealth && githubTokenHealth.status !== "valid" && <p className="collection-warning" role="status">
+            <strong>GitHub · {githubTokenHealthCopy(githubTokenHealth).label}.</strong> Les commits et dépendances affichés peuvent être périmés.{" "}
+            <Link href="/settings/integrations#github-integration">Vérifier le jeton</Link>
+          </p>}
           <section className="section applications-section" id="applications" aria-labelledby="applications-title">
               <div className="section-heading">
                 <div>
@@ -510,9 +517,9 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                   const releaseLabel = releaseState === "synced"
                     ? `À jour en ${deploymentEnvironment.toLowerCase()}`
                     : releaseState === "drift"
-                      ? "Un commit attend d’être déployé"
+                      ? "Le dépôt et le déploiement diffèrent"
                       : deployment
-                        ? "Comparaison en attente"
+                        ? "Comparaison à actualiser"
                         : "Déploiement non relié";
                   const repositoryCommitUrl = application.repositoryCommit
                     ? `https://github.com/${application.githubRepository}/commit/${application.repositoryCommit}`
@@ -582,7 +589,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                         <span className="release-station__branch">Branche {application.githubBranch}</span>
                         <a className="release-station__commit" href={repositoryCommitUrl} target="_blank" rel="noreferrer">
                           <GitCommitHorizontal aria-hidden="true" />
-                          <span><small>Dernier commit présent · {application.repositoryCommit?.slice(0, 7) ?? "Non analysé"}</small><strong className="commit-message" title={application.repositoryCommitMessage}>{application.repositoryCommitMessage?.split("\n")[0] ?? "Message disponible à la prochaine analyse"}</strong></span>
+                          <span><small>Dernier commit observé · {application.repositoryCommit?.slice(0, 7) ?? "Non analysé"}</small><strong className="commit-message" title={application.repositoryCommitMessage}>{application.repositoryCommitMessage?.split("\n")[0] ?? "Message disponible à la prochaine analyse"}</strong></span>
                         </a>
                         <small className="release-station__date">Observé · <LocalDateTime value={application.lastRepositoryScannedAt} fallback="Jamais analysé" /></small>
                       </div>
@@ -915,6 +922,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
               <div>
                 <p className="eyebrow">Dépôts et dépendances</p>
                 <h2 id="github-title">{githubIntegrationLabel ?? "Connecter GitHub"}</h2>
+                {githubTokenHealth && <GitHubTokenStatus health={githubTokenHealth} />}
                 <p>{githubIntegrationLabel ? "Les dépôts privés autorisés peuvent être analysés en lecture seule." : "Les dépôts publics fonctionnent sans jeton. Connecte GitHub pour les dépôts privés."}</p>
               </div>
               <Link className="button button--secondary" href="/settings/integrations">

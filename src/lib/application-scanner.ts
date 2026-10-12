@@ -14,7 +14,7 @@ import {
 } from "@/db/schema";
 import { inspectNpmDependencies, type DependencyFreshness } from "@/lib/dependency-freshness";
 import { groupDependencies, type DependencyGroup } from "@/lib/dependency-groups";
-import { getGitHubToken } from "@/lib/github-integration";
+import { withGitHubToken } from "@/lib/github-integration";
 import { createOrRefreshNotification, resolveNotification } from "@/lib/notifications";
 import { scanGitHubTechnologies } from "@/lib/technology-scanner";
 
@@ -346,8 +346,8 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
     .limit(1);
   if (!application) throw new Error("APPLICATION_NOT_FOUND");
 
-  const token = await getGitHubToken(workspaceId);
-  const scan = await scanGitHubTechnologies(application.githubRepository, application.githubBranch, token);
+  const scan = await withGitHubToken(workspaceId, (token) =>
+    scanGitHubTechnologies(application.githubRepository, application.githubBranch, token));
   const freshness = await inspectNpmDependencies(scan.dependencies);
   const checkedAt = new Date();
   const existingDependencies = await db

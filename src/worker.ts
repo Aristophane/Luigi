@@ -16,8 +16,13 @@ if (childId) {
         const { runHttpCheck } = await import("@/lib/http-monitor");
         await runHttpCheck(job.payload.checkId, job);
       } else if (job.kind === "scan") {
-        const { scanStoredApplication } = await import("@/lib/application-scanner");
-        await scanStoredApplication(job.workspaceId, job.payload.applicationId, job);
+        if (job.payload.githubTokenCheck === "true") {
+          const { checkStoredGitHubToken } = await import("@/lib/github-integration");
+          await checkStoredGitHubToken(job.workspaceId, job);
+        } else {
+          const { scanStoredApplication } = await import("@/lib/application-scanner");
+          await scanStoredApplication(job.workspaceId, job.payload.applicationId, job);
+        }
       } else if (job.kind === "report") {
         const { processAgentReport } = await import("@/lib/report-processing");
         await processAgentReport(job);

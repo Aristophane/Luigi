@@ -2795,6 +2795,33 @@ h3 {
   width: 0.8rem;
 }
 
+.github-token-status {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--warning);
+  border-radius: 0.5rem;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  overflow-wrap: anywhere;
+}
+
+.github-token-status strong {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--warning);
+  font-size: 0.85rem;
+}
+
+.github-token-status strong svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+.github-token-status p { margin: 0; font-size: 0.8rem; }
+.github-token-status small { font-size: 0.72rem; color: var(--text-tertiary); }
+.github-token-status--valid { border-left-color: var(--healthy); }
+.github-token-status--valid strong { color: var(--healthy); }
+
 .integration-form__body {
   display: flex;
   flex-direction: column;

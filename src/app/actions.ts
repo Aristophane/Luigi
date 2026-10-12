@@ -18,7 +18,7 @@ import { requireWorkspace } from "@/lib/dal";
 import { inspectNpmDependencies } from "@/lib/dependency-freshness";
 import { syncDependencyFindings } from "@/lib/application-scanner";
 import { GitHubApiError } from "@/lib/github";
-import { getGitHubToken } from "@/lib/github-integration";
+import { withGitHubToken } from "@/lib/github-integration";
 import { enqueueChecks } from "@/lib/monitor-scheduler";
 import { enqueueJob } from "@/lib/job-queue";
 import { scanGitHubTechnologies } from "@/lib/technology-scanner";
@@ -123,15 +123,18 @@ export async function createApplication(
   normalizedUrl.pathname = normalizedUrl.pathname.replace(/\/$/, "") || "/";
   const repository = parsed.data.repository.replace(/\.git$/i, "");
 
-  const token = await getGitHubToken(workspaceId);
+  let authenticated = false;
   let scan: Awaited<ReturnType<typeof scanGitHubTechnologies>>;
   try {
-    scan = await scanGitHubTechnologies(repository, parsed.data.branch, token);
+    scan = await withGitHubToken(workspaceId, (token) => {
+      authenticated = Boolean(token);
+      return scanGitHubTechnologies(repository, parsed.data.branch, token);
+    });
   } catch (error) {
     if (error instanceof GitHubApiError && error.status === 404) {
       return {
         status: "error",
-        message: token
+        message: authenticated
           ? "GitHub est connecté, mais ce jeton ne voit pas ce dépôt ou cette branche. Ajoute le dépôt à l’accès du jeton, puis vérifie le nom de la branche."
           : "Dépôt ou branche introuvable. Pour un dépôt privé, connecte d’abord GitHub dans les paramètres.",
       };
