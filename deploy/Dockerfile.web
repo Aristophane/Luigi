@@ -1,0 +1,24 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+COPY . .
+
+# Only the public browser push key is needed at build time. Production database
+# credentials, authentication secrets and integration keys remain runtime-only.
+ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
+ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build \
+    BETTER_AUTH_URL=http://build.invalid \
+    BETTER_AUTH_SECRET=build-placeholder-with-at-least-32-characters \
+    npm run build
+
+FROM node:24-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOST=0.0.0.0 PORT=3011
+COPY --from=build --chown=node:node /app /app
+USER node
+EXPOSE 3011
+# The Compose migration task owns migrations; the web process only serves HTTP.
+CMD ["npm", "run", "start"]

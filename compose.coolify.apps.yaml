@@ -1,0 +1,122 @@
+# Git-backed application containers. Existing database/storage Services stay running.
+# Configure runtime values in Coolify, never in Git. Disable preview deployments.
+services:
+  migrate:
+    restart: 'no'
+    environment:
+      BETTER_AUTH_SECRET: ${RUNTIME_WORKER_BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${RUNTIME_WORKER_BETTER_AUTH_URL}
+      DATABASE_URL: ${RUNTIME_WORKER_DATABASE_URL}
+      DEPENDENCY_SCAN_BATCH_SIZE: ${RUNTIME_WORKER_DEPENDENCY_SCAN_BATCH_SIZE}
+      DEPENDENCY_SCAN_INTERVAL_HOURS: ${RUNTIME_WORKER_DEPENDENCY_SCAN_INTERVAL_HOURS}
+      DISCORD_WEBHOOK_URL: ${RUNTIME_WORKER_DISCORD_WEBHOOK_URL}
+      HOST: ${RUNTIME_WORKER_HOST}
+      INTEGRATION_ENCRYPTION_KEY: ${RUNTIME_WORKER_INTEGRATION_ENCRYPTION_KEY}
+      MONITOR_CRON_INTERVAL_SECONDS: ${RUNTIME_WORKER_MONITOR_CRON_INTERVAL_SECONDS}
+      MONITOR_CRON_SECRET: ${RUNTIME_WORKER_MONITOR_CRON_SECRET}
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${RUNTIME_WORKER_NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+      NODE_ENV: ${RUNTIME_WORKER_NODE_ENV}
+      PORT: ${RUNTIME_WORKER_PORT}
+      VAPID_PRIVATE_KEY: ${RUNTIME_WORKER_VAPID_PRIVATE_KEY}
+      VAPID_SUBJECT: ${RUNTIME_WORKER_VAPID_SUBJECT}
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      egress: {}
+      ld4kjpob4yob3cqj0k95t0aq: {}
+    healthcheck:
+      disable: true
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.worker
+    command:
+    - node
+    - scripts/migrate.mjs
+  web:
+    restart: unless-stopped
+    environment:
+      BETTER_AUTH_SECRET: ${RUNTIME_WEB_BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${RUNTIME_WEB_BETTER_AUTH_URL}
+      DATABASE_URL: ${RUNTIME_WEB_DATABASE_URL}
+      DEPLOYMENT_INGEST_SECRET: ${RUNTIME_WEB_DEPLOYMENT_INGEST_SECRET}
+      DISCORD_WEBHOOK_URL: ${RUNTIME_WEB_DISCORD_WEBHOOK_URL}
+      HOST: ${RUNTIME_WEB_HOST}
+      INTEGRATION_ENCRYPTION_KEY: ${RUNTIME_WEB_INTEGRATION_ENCRYPTION_KEY}
+      LUIGI_DEPLOYMENT_SYNC_CODE_B64: ${RUNTIME_WEB_LUIGI_DEPLOYMENT_SYNC_CODE_B64}
+      LUIGI_NETLIFY_SYNC_CODE_B64: ${RUNTIME_WEB_LUIGI_NETLIFY_SYNC_CODE_B64}
+      LUIGI_RAILWAY_SYNC_CODE_B64: ${RUNTIME_WEB_LUIGI_RAILWAY_SYNC_CODE_B64}
+      MONITOR_CRON_INTERVAL_SECONDS: ${RUNTIME_WEB_MONITOR_CRON_INTERVAL_SECONDS}
+      MONITOR_CRON_SECRET: ${RUNTIME_WEB_MONITOR_CRON_SECRET}
+      NETLIFY_DEPLOYMENT_TOKEN: ${RUNTIME_WEB_NETLIFY_DEPLOYMENT_TOKEN}
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${RUNTIME_WEB_NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+      NODE_ENV: ${RUNTIME_WEB_NODE_ENV}
+      PORT: ${RUNTIME_WEB_PORT}
+      RAILWAY_CHARLET_PROJECT_TOKEN: ${RUNTIME_WEB_RAILWAY_CHARLET_PROJECT_TOKEN}
+      VAPID_PRIVATE_KEY: ${RUNTIME_WEB_VAPID_PRIVATE_KEY}
+      VAPID_SUBJECT: ${RUNTIME_WEB_VAPID_SUBJECT}
+    mem_limit: 512m
+    cpus: 1.0
+    networks:
+      egress: {}
+      ld4kjpob4yob3cqj0k95t0aq: {}
+    expose:
+    - '3011'
+    healthcheck:
+      test:
+      - CMD
+      - node
+      - -e
+      - fetch('http://127.0.0.1:3011/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+      args:
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${RUNTIME_WEB_NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  worker:
+    restart: unless-stopped
+    environment:
+      BETTER_AUTH_SECRET: ${RUNTIME_WORKER_BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${RUNTIME_WORKER_BETTER_AUTH_URL}
+      DATABASE_URL: ${RUNTIME_WORKER_DATABASE_URL}
+      DEPENDENCY_SCAN_BATCH_SIZE: ${RUNTIME_WORKER_DEPENDENCY_SCAN_BATCH_SIZE}
+      DEPENDENCY_SCAN_INTERVAL_HOURS: ${RUNTIME_WORKER_DEPENDENCY_SCAN_INTERVAL_HOURS}
+      DISCORD_WEBHOOK_URL: ${RUNTIME_WORKER_DISCORD_WEBHOOK_URL}
+      HOST: ${RUNTIME_WORKER_HOST}
+      INTEGRATION_ENCRYPTION_KEY: ${RUNTIME_WORKER_INTEGRATION_ENCRYPTION_KEY}
+      MONITOR_CRON_INTERVAL_SECONDS: ${RUNTIME_WORKER_MONITOR_CRON_INTERVAL_SECONDS}
+      MONITOR_CRON_SECRET: ${RUNTIME_WORKER_MONITOR_CRON_SECRET}
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${RUNTIME_WORKER_NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+      NODE_ENV: ${RUNTIME_WORKER_NODE_ENV}
+      PORT: ${RUNTIME_WORKER_PORT}
+      VAPID_PRIVATE_KEY: ${RUNTIME_WORKER_VAPID_PRIVATE_KEY}
+      VAPID_SUBJECT: ${RUNTIME_WORKER_VAPID_SUBJECT}
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      egress: {}
+      ld4kjpob4yob3cqj0k95t0aq: {}
+    healthcheck:
+      disable: true
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.worker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+    - node
+    - build/worker/worker.mjs
+networks:
+  egress:
+    external: true
+    name: luigi-20261023-egress
+  ld4kjpob4yob3cqj0k95t0aq:
+    name: ld4kjpob4yob3cqj0k95t0aq
+    external: true
