@@ -10,3 +10,5 @@ playwright-report
 **/__pycache__
 **/*.pyc
 *.log
+# Exclude deployment metadata rewritten by Coolify from application build layers.
+/compose.coolify.apps.yaml
