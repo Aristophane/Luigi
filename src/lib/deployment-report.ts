@@ -10,7 +10,7 @@ export const deploymentReportSchema = z.object({
   applicationId: z.string().uuid().optional(),
   applicationUrl: httpUrl.optional(),
   deploymentId: z.string().trim().min(1).max(200),
-  commitSha: z.string().trim().regex(/^[a-f0-9]{7,64}$/i).transform((value) => value.toLowerCase()),
+  commitSha: z.string().trim().regex(/^[a-f0-9]{7,64}$/i).transform((value) => value.toLowerCase()).nullable(),
   source: z.string().trim().min(1).max(60).regex(/^[a-z0-9._-]+$/i).default("ci").transform((value) => value.toLowerCase()),
   sourceUrl: httpUrl.optional(),
   deployedAt: z.iso.datetime({ offset: true }),
@@ -52,8 +52,8 @@ export function deploymentReportTargetError(report: DeploymentReport, applicatio
   if (report.environment && report.environment !== application.environment) return "Deployment environment does not match the application.";
 }
 
-export function deploymentReportConflicts(report: DeploymentReport, existing: { commitSha: string; branch: string | null; environment: string | null }) {
-  return !deploymentCommitsMatch(report.commitSha, existing.commitSha)
+export function deploymentReportConflicts(report: DeploymentReport, existing: { commitSha: string | null; branch: string | null; environment: string | null }) {
+  return Boolean(report.commitSha && existing.commitSha && !deploymentCommitsMatch(report.commitSha, existing.commitSha))
     || Boolean(report.branch && existing.branch && report.branch !== existing.branch)
     || Boolean(report.environment && existing.environment && report.environment !== existing.environment);
 }

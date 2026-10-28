@@ -1,0 +1,1 @@
+ALTER TABLE "deployments" ALTER COLUMN "commit_sha" DROP NOT NULL;

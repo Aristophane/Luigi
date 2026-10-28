@@ -11,7 +11,7 @@ const targetSchema = z.discriminatedUnion("provider", [
 export type DeploymentSyncTarget = z.infer<typeof targetSchema>;
 export type DeploymentApplication = { id: string; publicUrl: string; githubRepository: string; githubBranch: string;
   environment: "production" | "staging" | "development" };
-export type ProviderDeployment = { deploymentId: string; commitSha: string; source: "coolify" | "netlify" | "railway";
+export type ProviderDeployment = { deploymentId: string; commitSha: string | null; source: "coolify" | "netlify" | "railway";
   sourceUrl: string; deployedAt: string; branch?: string;
   verification: { provider: "coolify" | "netlify" | "railway"; observedAt: string } };
 type JsonObject = Record<string, unknown>;
@@ -160,7 +160,7 @@ export async function readProviderDeployment(target: DeploymentSyncTarget, appli
   if (application.environment !== "production") throw new Error("Railway target must identify a production application");
   const query = `query LuigiDeployments($input: DeploymentListInput!) {
     deployments(first: 5, input: $input) { edges { node {
-      id status statusUpdatedAt createdAt projectId environmentId serviceId deploymentStopped meta
+      id status statusUpdatedAt createdAt projectId environmentId serviceId deploymentStopped url staticUrl meta
     } } }
   }`;
   const result = object(await requestJson("https://backboard.railway.com/graphql/v2", {
@@ -182,12 +182,25 @@ export async function readProviderDeployment(target: DeploymentSyncTarget, appli
   if (deployed.projectId !== target.projectId || deployed.environmentId !== target.environmentId || deployed.serviceId !== target.serviceId) {
     throw new Error("Railway deployment scope mismatch");
   }
+  const expectedHost = new URL(application.publicUrl).hostname.toLowerCase();
+  const exposedHosts = [deployed.url, deployed.staticUrl].flatMap((value) => {
+    if (typeof value !== "string" || !value) return [];
+    try { return [new URL(value.includes("://") ? value : `https://${value}`).hostname.toLowerCase()]; }
+    catch { return []; }
+  });
+  if (!exposedHosts.includes(expectedHost)) throw new Error("Railway deployment domain mismatch");
   const meta = object(deployed.meta);
-  if (repository(meta.repo) !== repository(application.githubRepository)) throw new Error("Railway repository mismatch");
+  const hasRepository = typeof meta.repo === "string" && Boolean(meta.repo.trim());
+  if (hasRepository && repository(meta.repo) !== repository(application.githubRepository)) throw new Error("Railway repository mismatch");
+  const branch = meta.branch == null ? undefined : verifyBranch(meta.branch, application);
+  // CLI uploads can expose a live deployment and image digest without any Git provenance.
+  // Confirm the provider's deployment identity, and keep the Git revision explicitly unknown.
+  const hasGitProvenance = hasRepository && Boolean(branch) && Boolean(meta.commitHash);
+  const revision = hasGitProvenance ? commit(meta.commitHash) : null;
   if (typeof deployed.id !== "string") throw new Error("Missing Railway deployment identity");
   const at = timestamp(deployed.statusUpdatedAt, now);
   if (at < timestamp(deployed.createdAt, now)) throw new Error("Invalid Railway deployment chronology");
-  return { deploymentId: deployed.id, commitSha: commit(meta.commitHash), source: "railway",
+  return { deploymentId: deployed.id, commitSha: revision, source: "railway",
     sourceUrl: `https://railway.com/project/${target.projectId}/service/${target.serviceId}?environmentId=${target.environmentId}&id=${encodeURIComponent(deployed.id)}`,
-    deployedAt: at, branch: verifyBranch(meta.branch, application), verification: verification() };
+    deployedAt: at, branch, verification: verification() };
 }

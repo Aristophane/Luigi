@@ -25,7 +25,7 @@ import { aggregateHealth, isFresh } from "@/lib/monitoring-state";
 import { applicationCoverage } from "@/lib/coverage";
 import { readiness } from "@/lib/readiness";
 import { readGitHubTokenHealth, repositoryDeploymentMatch } from "@/lib/github-token-health";
-import { dependencyCategory, repositoryScanState, type DependencyCategory } from "@/lib/application-status";
+import { dependencyCategory, repositoryScanState, shortDeploymentCommit, type DependencyCategory } from "@/lib/application-status";
 import { deploymentConfirmationState } from "@/lib/deployment-health";
 
 export const dynamic = "force-dynamic";
@@ -245,7 +245,7 @@ export default async function Home() {
       } : undefined,
       productionDeployment: productionDeployment ? {
         commitSha: productionDeployment.commitSha,
-        shortCommit: productionDeployment.commitSha.slice(0, 7),
+        shortCommit: shortDeploymentCommit(productionDeployment.commitSha),
         deployedAt: productionDeployment.deployedAt.toISOString(),
         source: productionDeployment.source,
         sourceUrl: productionDeployment.sourceUrl ?? undefined,
@@ -330,7 +330,7 @@ export default async function Home() {
     ...recentDeployments.map((deployment) => ({
       id: deployment.id,
       title: `${deployment.applicationName} déployée`,
-      detail: `${deployment.commitSha.slice(0, 7)} · ${deploymentSourceLabel(deployment.source)}`,
+      detail: `${deployment.commitSha ? shortDeploymentCommit(deployment.commitSha) : "Commit non communiqué"} · ${deploymentSourceLabel(deployment.source)}`,
       status: "healthy" as const,
       occurredAt: deployment.deployedAt,
     })),

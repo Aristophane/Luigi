@@ -7,6 +7,24 @@ export const availabilityLabels: Record<HealthStatus, string> = {
   unknown: "HTTP : inconnu",
 };
 
+export function shortDeploymentCommit(commitSha: string | null | undefined) {
+  return commitSha?.slice(0, 7) ?? "Non communiqué";
+}
+
+export function deploymentReleasePresentation(deployment: {
+  commitSha: string | null;
+  matchesRepositoryHead: boolean | null;
+  confirmationState: "confirmed" | "stale" | "unverified";
+} | undefined, environmentLabel: string): { state: "synced" | "drift" | "unknown"; label: string } {
+  if (!deployment) return { state: "unknown", label: "Déploiement non relié" };
+  if (deployment.confirmationState === "stale") return { state: "unknown", label: "Confirmation du déploiement périmée" };
+  if (deployment.confirmationState === "unverified") return { state: "unknown", label: "Déploiement non confirmé" };
+  if (!deployment.commitSha) return { state: "unknown", label: "Déploiement confirmé · commit non communiqué" };
+  if (deployment.matchesRepositoryHead === true) return { state: "synced", label: `À jour en ${environmentLabel.toLowerCase()}` };
+  if (deployment.matchesRepositoryHead === false) return { state: "drift", label: "Le dépôt et le déploiement diffèrent" };
+  return { state: "unknown", label: "Comparaison à actualiser" };
+}
+
 export type DependencyCategory = "runtime" | "development" | "tooling";
 
 const toolingPackages = new Set([

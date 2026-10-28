@@ -17,7 +17,7 @@ Ouvrir ensuite [http://localhost:3011](http://localhost:3011).
 
 Démarrer aussi **`npm run build:worker`, puis `npm run worker` dans un second terminal** : les contrôles, analyses, rapports et notifications utilisent une file persistante. Reconstruire le worker après une modification de son code ; `npm run worker:dev` permet de travailler directement sur les sources. Sans ce processus, `/api/ready` et `/api/health` répondent 503. Pour une installation existante, suivre le [déploiement Coolify pas à pas](docs/deployment-coolify.md) ou le [guide de fiabilité](docs/reliability.md) pour une installation directe et le témoin externe.
 
-Cette version nécessite la migration **`0018_deployment_confirmation.sql`** avant le démarrage du nouveau web et du worker : appliquer les migrations avec `npm run db:migrate:prod` en production. Le déploiement actif utilise `compose.coolify.apps.yaml` ; le déploiement automatique depuis Git a été rétabli le 25 octobre 2026. Le diagnostic du 23 octobre concernant des images figées décrit une configuration antérieure.
+Cette version nécessite les migrations **`0018_deployment_confirmation.sql`** et **`0019_deployment_unknown_commit.sql`** avant le démarrage du nouveau web et du worker : appliquer les migrations avec `npm run db:migrate:prod` en production. Le déploiement actif utilise `compose.coolify.apps.yaml` ; le déploiement automatique depuis Git a été rétabli le 25 octobre 2026. Le diagnostic du 23 octobre concernant des images figées décrit une configuration antérieure.
 
 Au premier démarrage, Luigi redirige vers `/setup` pour créer l’unique compte administrateur de la V1. Les créations de compte suivantes sont refusées côté serveur. Copie `.env.example` vers `.env.local` si ce fichier n’existe pas et remplace impérativement `BETTER_AUTH_SECRET` hors développement local.
 
@@ -65,7 +65,7 @@ Le cockpit indique l’état et la date du dernier scan, ses limites, puis sépa
 
 ## Version actuellement déployée
 
-Le worker peut confirmer périodiquement la version active auprès de Coolify, Netlify et Railway. Voir [la configuration de la synchronisation des déploiements](docs/deployment-sync.md). Une confirmation du fournisseur reste valable deux heures ; la date de livraison peut être ancienne si la même version est toujours active.
+Le worker peut confirmer périodiquement la version active auprès de Coolify, Netlify et Railway. Voir [la configuration de la synchronisation des déploiements](docs/deployment-sync.md). Une confirmation du fournisseur reste valable deux heures ; la date de livraison peut être ancienne si la même version est toujours active. Un déploiement Railway envoyé par la CLI sans provenance Git est confirmé avec la mention « commit non communiqué » ; sa comparaison avec le dépôt reste inconnue.
 
 Pour enregistrer aussi les événements CI, configure `DEPLOYMENT_INGEST_SECRET` puis appelle Luigi après une livraison réussie. Ce signal seul conserve un événement historique sans confirmer la version encore active. L’application est identifiée par son URL publique ou son UUID. `deploymentId` identifie une exécution de manière stable ; une répétition incompatible avec son SHA ou sa cible reçoit HTTP 409.
 
@@ -94,7 +94,7 @@ Le worker vérifie le jeton enregistré toutes les heures, même sans dépôt su
 
 Un refus HTTP 401 signale un jeton invalide, potentiellement expiré ou révoqué ; un refus de permissions, une limitation de requêtes, une panne réseau et une erreur de chiffrement restent distingués. Une notification interne dédupliquée indique où intervenir ; l’enregistrement d’un nouveau jeton valide la résout et relance immédiatement les analyses des applications actives, sans attendre le délai habituel de 24 heures après un scan en échec. Un contrôle qui confirme le retour de l’accès après une erreur relance également ces analyses. Les tâches déjà en attente reprennent immédiatement avec un nouveau budget de tentatives ; les analyses en cours conservent leur bail et aucun doublon actif n’est créé. Aucune date d’expiration n’est déduite d’un simple refus. Les anciennes intégrations sont indiquées « à vérifier » jusqu’à leur premier contrôle.
 
-La comparaison des commits reste inconnue lorsque le jeton n’est pas confirmé, que l’observation du dépôt est antérieure au déploiement, qu’elle date de plus de 25 heures ou que la confirmation du fournisseur manque ou est périmée. Une différence de SHA ne présume pas lequel est en avance. Appliquer la migration 0018, puis reconstruire et redéployer **le web et le worker**.
+La comparaison des commits reste inconnue lorsque le commit déployé n’est pas communiqué, que le jeton n’est pas confirmé, que l’observation du dépôt est antérieure au déploiement, qu’elle date de plus de 25 heures ou que la confirmation du fournisseur manque ou est périmée. Une différence de SHA ne présume pas lequel est en avance. Appliquer les migrations 0018 et 0019, puis reconstruire et redéployer **le web et le worker**.
 
 ## Notifications Web Push
 

@@ -54,7 +54,7 @@ import { ScanApplicationButton } from "@/components/scan-application-button";
 import { LocalDateTime } from "@/components/local-date-time";
 import { GitHubTokenStatus } from "@/components/github-token-status";
 import { githubTokenHealthCopy, type GitHubTokenHealth } from "@/lib/github-token-health";
-import { availabilityLabels, repositoryScanLabels } from "@/lib/application-status";
+import { availabilityLabels, deploymentReleasePresentation, repositoryScanLabels } from "@/lib/application-status";
 import type { ActivityEvent, DashboardNotification, GitHubRepositoryOption, MaintenanceTask, MonitoredApplication, MonitoredDependency, VpsOverview } from "@/lib/domain";
 
 type Theme = "light" | "dark";
@@ -560,20 +560,10 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                     : application.environment === "staging"
                       ? "Préproduction"
                       : "Développement";
-                  const releaseState = deployment?.matchesRepositoryHead === true
-                    ? "synced"
-                    : deployment?.matchesRepositoryHead === false
-                      ? "drift"
-                      : "unknown";
-                  const releaseLabel = releaseState === "synced"
-                    ? `À jour en ${deploymentEnvironment.toLowerCase()}`
-                    : releaseState === "drift"
-                      ? "Le dépôt et le déploiement diffèrent"
-                      : deployment
-                        ? deployment.confirmationState === "stale" ? "Confirmation du déploiement périmée"
-                          : deployment.confirmationState === "unverified" ? "Déploiement non confirmé"
-                            : "Comparaison à actualiser"
-                        : "Déploiement non relié";
+                  const { state: releaseState, label: releaseLabel } = deploymentReleasePresentation(deployment, deploymentEnvironment);
+                  const deploymentVersionLabel = deployment?.commitSha
+                    ? deployment.confirmationState === "confirmed" ? "Version confirmée" : "Dernière version déclarée"
+                    : "Commit du déploiement";
                   const repositoryCommitUrl = application.repositoryCommit
                     ? `https://github.com/${application.githubRepository}/commit/${application.repositoryCommit}`
                     : `https://github.com/${application.githubRepository}/tree/${application.githubBranch}`;
@@ -660,12 +650,12 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                           {deployment.sourceUrl ? (
                             <a className="release-station__commit" href={deployment.sourceUrl} target="_blank" rel="noreferrer" title="Ouvrir le déploiement source">
                               <GitCommitHorizontal aria-hidden="true" />
-                              <span><small>{deployment.confirmationState === "confirmed" ? "Version confirmée" : "Dernière version déclarée"}</small><strong>{deployment.shortCommit}</strong></span>
+                              <span><small>{deploymentVersionLabel}</small><strong>{deployment.shortCommit}</strong></span>
                             </a>
                           ) : (
                             <span className="release-station__commit">
                               <GitCommitHorizontal aria-hidden="true" />
-                              <span><small>{deployment.confirmationState === "confirmed" ? "Version confirmée" : "Dernière version déclarée"}</small><strong>{deployment.shortCommit}</strong></span>
+                              <span><small>{deploymentVersionLabel}</small><strong>{deployment.shortCommit}</strong></span>
                             </span>
                           )}
                           <small className="release-station__date">Déployé le <LocalDateTime value={deployment.deployedAt} /> · {deploymentSourceLabels[deployment.source] ?? deployment.source}</small>

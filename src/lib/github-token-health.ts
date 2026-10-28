@@ -42,9 +42,9 @@ export function githubTokenHealthCopy(health: GitHubTokenHealth) {
   }
 }
 
-export function repositoryDeploymentMatch(repositoryCommit: string | null, scannedAt: Date | null, deployedCommit: string,
+export function repositoryDeploymentMatch(repositoryCommit: string | null, scannedAt: Date | null, deployedCommit: string | null,
   deployedAt: Date, health?: GitHubTokenHealth, now = new Date(), verifiedAt?: Date | null): boolean | null {
-  if (!repositoryCommit || !scannedAt || (health && health.status !== "valid")) return null;
+  if (!repositoryCommit || !deployedCommit || !scannedAt || (health && health.status !== "valid")) return null;
   if (deploymentConfirmationState(verifiedAt, now) !== "confirmed") return null;
   if (scannedAt < deployedAt || now.getTime() - scannedAt.getTime() > 25 * 60 * 60 * 1000) return null;
   return deploymentCommitsMatch(repositoryCommit, deployedCommit);

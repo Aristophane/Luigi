@@ -39,7 +39,7 @@ export interface MonitoredDependency {
 }
 
 export interface DeploymentSummary {
-  commitSha: string;
+  commitSha: string | null;
   shortCommit: string;
   deployedAt: string;
   source: string;

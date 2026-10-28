@@ -56,7 +56,7 @@ export default async function IntegrationsPage() {
               ? "Les signaux CI sont acceptés après une livraison réussie. La réception activée ne garantit pas qu’un émetteur soit relié."
               : "Ajoute DEPLOYMENT_INGEST_SECRET au serveur Luigi avant de relier ton pipeline."}</p>
             <code>POST /api/deployments</code>
-            <small>Champs requis : applicationUrl, deploymentId, commitSha et deployedAt.</small>
+            <small>Champs requis : applicationUrl, deploymentId, commitSha et deployedAt. Envoie commitSha: null si le fournisseur ne communique aucun commit.</small>
           </div>
         </section>
         <DiscordIntegration configured={isDiscordConfigured()} />

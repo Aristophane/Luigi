@@ -130,7 +130,7 @@ export const deployments = pgTable(
       .notNull()
       .references(() => applications.id, { onDelete: "cascade" }),
     deploymentId: text("deployment_id").notNull(),
-    commitSha: text("commit_sha").notNull(),
+    commitSha: text("commit_sha"),
     source: text("source").default("ci").notNull(),
     sourceUrl: text("source_url"),
     deployedAt: timestamp("deployed_at", { withTimezone: true }).notNull(),

@@ -49,7 +49,9 @@ export async function recordDeployment(application: DeploymentApplication, repor
     // legacy retries cannot erase a more recent provider observation.
     const newerVerification = verifiedAt && (!existing.verifiedAt || verifiedAt > existing.verifiedAt);
     await transaction.update(deployments).set({
-      commitSha: report.commitSha.length > existing.commitSha.length ? report.commitSha : existing.commitSha,
+      // Missing provider metadata can be enriched later, but never erase a known commit.
+      commitSha: report.commitSha && (!existing.commitSha || report.commitSha.length > existing.commitSha.length)
+        ? report.commitSha : existing.commitSha,
       branch: existing.branch ?? report.branch,
       environment: existing.environment ?? report.environment,
       sourceUrl: report.sourceUrl ?? existing.sourceUrl,

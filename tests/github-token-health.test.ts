@@ -41,4 +41,5 @@ test("repository comparison requires a recent provider confirmation, including f
   assert.equal(repositoryDeploymentMatch("1b9a14abcdef", now, "1b9a14a", oldRelease, { status: "valid" }, now, now), true);
   assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", oldRelease, { status: "valid" }, now, now), false);
   assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", oldRelease, { status: "invalid" }, now, now), null);
+  assert.equal(repositoryDeploymentMatch("1b9a14abcdef", now, null, oldRelease, { status: "valid" }, now, now), null);
 });

@@ -65,6 +65,7 @@ test("Netlify uses published production deployment, including an old version rep
 test("Railway validates project/environment/service, active state and repository", async () => {
   const target = { provider: "railway" as const, applicationId: application.id, projectId: "project", environmentId: "environment", serviceId: "service", tokenVariable: "RAILWAY_PROJECT_TOKEN" };
   const deployed = { id: "deployment", status: "SUCCESS", deploymentStopped: false, projectId: "project", environmentId: "environment", serviceId: "service",
+    url: application.publicUrl,
     createdAt: "2026-10-27T10:00:00Z", statusUpdatedAt: "2026-10-27T10:02:00Z", meta: { repo: "acme/app", branch: "main", commitHash: sha } };
   const resultFor = (node: unknown) => readProviderDeployment(target, application, { env, now,
     fetch: async (_input, init) => {
@@ -75,10 +76,18 @@ test("Railway validates project/environment/service, active state and repository
   assert.equal((await resultFor(deployed)).commitSha, sha);
   await assert.rejects(resultFor({ ...deployed, deploymentStopped: true }), /No active/);
   await assert.rejects(resultFor({ ...deployed, environmentId: "preview" }), /scope/);
+  await assert.rejects(resultFor({ ...deployed, url: "https://other.example.com/" }), /domain/);
   await assert.rejects(resultFor({ ...deployed, meta: { repo: "acme/other", commitHash: sha } }), /repository/);
-  await assert.rejects(resultFor({ ...deployed, meta: { repo: "acme/app", commitHash: sha } }), /branch is missing/);
+  assert.equal((await resultFor({ ...deployed, meta: { repo: "acme/app", commitHash: sha } })).commitSha, null,
+    "Incomplete Git provenance does not confirm a revision");
+  await assert.rejects(resultFor({ ...deployed, meta: { repo: "acme/app", branch: "staging" } }), /branch/);
   await assert.rejects(readProviderDeployment(target, application, { env, now, fetch: async () => Response.json({ errors: [{ message: "private details" }] }) }), /GraphQL request failed/);
   await assert.rejects(readProviderDeployment(target, application, { env, now, fetch: async () => Response.json({ errors: [{ message: "Not Authorized" }] }) }), /access denied: check project token/);
+  const uploaded = await resultFor({ ...deployed, meta: { reason: "deploy", imageDigest: "sha256:upload" } });
+  assert.equal(uploaded.commitSha, null, "A live CLI upload does not invent a Git revision");
+  assert.equal(uploaded.branch, undefined);
+  assert.equal(uploaded.deploymentId, "deployment");
+  assert.equal(uploaded.verification.provider, "railway");
 });
 
 test("provider errors expose status without response bodies or tokens", async () => {

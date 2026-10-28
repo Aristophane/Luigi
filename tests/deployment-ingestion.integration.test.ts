@@ -71,6 +71,24 @@ test("deployment ingestion authenticates, fences conflicting events and refreshe
     assert.equal((await db.select().from(deployments).where(eq(deployments.id, retained.id)))[0].verifiedAt?.toISOString(), observedAt.toISOString());
     const { synchronizeDeployments } = await import("@/lib/deployment-sync");
     await assert.rejects(synchronizeDeployments(workspace.id, expiredJob), /JOB_LEASE_LOST/);
+
+    const uploadReport = { ...report, deploymentId: "uploaded-without-git-metadata", commitSha: null,
+      verification: { provider: "coolify", observedAt: new Date().toISOString() } };
+    assert.equal((await send({ ...uploadReport, commitSha: undefined })).status, 422);
+    assert.equal((await send(uploadReport)).status, 202);
+    const [upload] = await db.select().from(deployments).where(eq(deployments.deploymentId, uploadReport.deploymentId));
+    assert.equal(upload.commitSha, null);
+    assert.equal(upload.verifiedAt?.toISOString(), uploadReport.verification.observedAt);
+    assert.equal((await send(uploadReport)).status, 200);
+    assert.equal((await send({ ...uploadReport, commitSha: report.commitSha })).status, 200);
+    const [enriched] = await db.select().from(deployments).where(eq(deployments.id, upload.id));
+    assert.equal(enriched.commitSha, report.commitSha);
+    assert.equal((await send({ ...uploadReport, commitSha: "123456789abcdef0" })).status, 409);
+    const refreshedAt = new Date(Date.now() + 1_000).toISOString();
+    assert.equal((await send({ ...uploadReport, verification: { ...uploadReport.verification, observedAt: refreshedAt } })).status, 200);
+    const [preserved] = await db.select().from(deployments).where(eq(deployments.id, upload.id));
+    assert.equal(preserved.commitSha, report.commitSha);
+    assert.equal(preserved.verifiedAt?.toISOString(), refreshedAt);
     const [otherWorkspace] = await db.insert(workspaces).values({ name: "Other workspace" }).returning();
     await db.insert(applications).values({ workspaceId: otherWorkspace.id, name: "Other fixture",
       publicUrl: "https://example.com/", githubRepository: "test/other" });

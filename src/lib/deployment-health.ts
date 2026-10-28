@@ -9,7 +9,8 @@ export function deploymentConfirmationState(verifiedAt: Date | null | undefined,
   return age >= -5 * 60 * 1000 && age <= deploymentConfirmationMaxAgeMs ? "confirmed" : "stale";
 }
 
-export function deploymentCommitsMatch(left: string, right: string) {
+export function deploymentCommitsMatch(left: string | null, right: string | null) {
+  if (!left || !right) return false;
   if (!/^[a-f0-9]{7,64}$/i.test(left) || !/^[a-f0-9]{7,64}$/i.test(right)) return false;
   const normalizedLeft = left.toLowerCase();
   const normalizedRight = right.toLowerCase();

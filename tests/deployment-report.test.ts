@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deploymentConfirmationState } from "@/lib/deployment-health";
+import { deploymentCommitsMatch, deploymentConfirmationState } from "@/lib/deployment-health";
 import { deploymentReportConflicts, deploymentReportDateError, deploymentReportSchema,
   deploymentReportTargetError, normalizeApplicationUrl } from "@/lib/deployment-report";
 
@@ -40,4 +40,20 @@ test("reported targets must match the monitored application and an event cannot 
   assert.equal(deploymentReportConflicts(report, { commitSha: "abcdef0", branch: null, environment: null }), false);
   assert.equal(deploymentReportConflicts(report, { commitSha: "abcdef1", branch: null, environment: null }), true);
   assert.equal(deploymentReportConflicts(report, { commitSha: report.commitSha, branch: "develop", environment: null }), true);
+});
+
+test("an unknown commit is explicit, never equals a commit, and can be enriched without weakening known conflicts", () => {
+  const unknown = deploymentReportSchema.parse({ ...legacy, commitSha: null });
+  const known = deploymentReportSchema.parse(legacy);
+  assert.equal(unknown.commitSha, null);
+  assert.equal(deploymentReportSchema.safeParse({ ...legacy, commitSha: undefined }).success, false);
+  assert.equal(deploymentReportSchema.safeParse({ ...legacy, commitSha: "unknown" }).success, false);
+  assert.equal(deploymentCommitsMatch(null, null), false);
+  assert.equal(deploymentCommitsMatch(null, known.commitSha), false);
+  assert.equal(deploymentCommitsMatch(known.commitSha, null), false);
+  assert.equal(deploymentReportConflicts(known, { commitSha: null, branch: null, environment: null }), false);
+  assert.equal(deploymentReportConflicts(unknown, { commitSha: known.commitSha, branch: null, environment: null }), false);
+  assert.equal(deploymentReportConflicts(unknown, { commitSha: null, branch: null, environment: null }), false);
+  assert.equal(deploymentReportConflicts(known, { commitSha: "123456789abcdef0", branch: null, environment: null }), true);
+  assert.equal(deploymentReportConflicts({ ...unknown, branch: "main" }, { commitSha: null, branch: "develop", environment: null }), true);
 });

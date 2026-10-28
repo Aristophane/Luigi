@@ -1,8 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dependencyCategory, repositoryScanState, sameHttpCheckConfiguration } from "@/lib/application-status";
+import { dependencyCategory, deploymentReleasePresentation, repositoryScanState, sameHttpCheckConfiguration, shortDeploymentCommit } from "@/lib/application-status";
 
 const now = new Date("2026-10-28T12:00:00Z");
+
+test("a confirmed deployment with no commit keeps its provider proof without claiming a Git comparison", () => {
+  const deployment = { commitSha: null, confirmationState: "confirmed" as const, matchesRepositoryHead: null };
+  assert.equal(shortDeploymentCommit(null), "Non communiqué");
+  assert.equal(shortDeploymentCommit("abcdef123456789"), "abcdef1");
+  assert.deepEqual(deploymentReleasePresentation(deployment, "Production"), {
+    state: "unknown", label: "Déploiement confirmé · commit non communiqué",
+  });
+  assert.equal(deploymentReleasePresentation({ ...deployment, matchesRepositoryHead: true }, "Production").state, "unknown");
+  assert.equal(deploymentReleasePresentation({ ...deployment, confirmationState: "stale" }, "Production").label, "Confirmation du déploiement périmée");
+  assert.equal(deploymentReleasePresentation({ ...deployment, commitSha: "abcdef123456789", matchesRepositoryHead: true }, "Production").state, "synced");
+});
 
 test("runtime libraries remain distinct from development and migration tooling", () => {
   assert.equal(dependencyCategory({ name: "@vendure/core", development: false }), "runtime");

@@ -31,6 +31,8 @@ Une confirmation expire après deux heures sans nouvelle vérification. L'évén
 
 Les erreurs par application sont conservées dans le journal des tâches de synchronisation, visible dans **Paramètres → Intégrations**. Les sources valides sont enregistrées même si une autre source échoue. La tâche applique ensuite les reprises habituelles de la file persistante. Les pulsations du worker seules ne confirment pas une vérification d'hébergeur.
 
+Un envoi d'archive par la CLI Railway peut ne contenir aucune référence Git. Luigi vérifie alors le projet, l'environnement, le service, le domaine public et le déploiement actif, mais conserve `commitSha: null`. L'interface indique « commit non communiqué » et ne compare pas ce déploiement au dépôt. Une confirmation du déploiement ne constitue pas une preuve de son commit.
+
 Les événements CI existants restent acceptés par `POST /api/deployments`. `branch` et `environment` optionnels sont contrôlés contre l'application. Un même identifiant avec un SHA ou des attributs incompatibles reçoit HTTP 409. La preuve facultative `verification: {"provider":"coolify","observedAt":"2026-10-28T12:00:00Z"}` doit être ajoutée uniquement après une lecture effective de l'hébergeur. Le worker réutilise cette même ingestion transactionnelle avec son bail.
 
 Références des fournisseurs : [Coolify API](https://coolify.io/docs/api/overview), [Netlify API](https://docs.netlify.com/api-and-cli-guides/api-guides/get-started-with-api/), [Railway API](https://docs.railway.com/integrations/api/manage-deployments).
