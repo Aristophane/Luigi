@@ -54,7 +54,8 @@ import { ScanApplicationButton } from "@/components/scan-application-button";
 import { LocalDateTime } from "@/components/local-date-time";
 import { GitHubTokenStatus } from "@/components/github-token-status";
 import { githubTokenHealthCopy, type GitHubTokenHealth } from "@/lib/github-token-health";
-import type { ActivityEvent, DashboardNotification, GitHubRepositoryOption, MaintenanceTask, MonitoredApplication, VpsOverview } from "@/lib/domain";
+import { availabilityLabels, repositoryScanLabels } from "@/lib/application-status";
+import type { ActivityEvent, DashboardNotification, GitHubRepositoryOption, MaintenanceTask, MonitoredApplication, MonitoredDependency, VpsOverview } from "@/lib/domain";
 
 type Theme = "light" | "dark";
 type PushState = "idle" | "loading" | "enabled" | "denied" | "unsupported" | "not_configured" | "error";
@@ -97,6 +98,38 @@ function displayHost(value: string) {
   } catch {
     return value.replace(/^https?:\/\//, "").replace(/\/$/, "");
   }
+}
+
+const dependencyCategoryLabels = { runtime: "Exécution", development: "Développement", tooling: "Outils et migrations" };
+
+function DependencyTables({ dependencies, fresh }: { dependencies: MonitoredDependency[]; fresh: boolean }) {
+  return (["runtime", "development", "tooling"] as const).map((category) => {
+    const members = dependencies.filter((dependency) => dependency.category === category);
+    if (!members.length) return null;
+    return <section key={category} aria-label={dependencyCategoryLabels[category]}>
+      <h4>{dependencyCategoryLabels[category]} · {members.length} groupe(s)</h4>
+      <div className="dependency-table">
+        <div className="dependency-table__head" aria-hidden="true">
+          <span>Bibliothèque</span><span>Version du dépôt</span><span>Dernière observée</span><span>État observé</span>
+        </div>
+        {members.map((dependency) => <div className="dependency-table__row" key={`${dependency.ecosystem}:${dependency.manifestPath}:${dependency.name}`}>
+          <span className="dependency-table__name">
+            <strong>{dependency.name}</strong>
+            <small title={dependency.packages && dependency.packages.length > 1 ? dependency.packages.join(", ") : undefined}>
+              {dependency.ecosystem === "pypi" ? "Python · " : "npm · "}
+              {dependency.packages && dependency.packages.length > 1 ? `${dependency.packages.length} paquets · ` : ""}{dependency.manifestPath}
+            </small>
+          </span>
+          <span data-label="Version du dépôt">{dependency.currentVersion ?? dependency.requestedRange}</span>
+          <span data-label="Dernière observée">{dependency.latestVersion ?? "Indisponible"}</span>
+          <span data-label="État observé" className={`dependency-status dependency-status--${fresh ? dependency.status : "unknown"}`}>
+            {!fresh ? "À reconfirmer" : dependency.status === "outdated" ? "Mise à jour disponible"
+              : dependency.status === "current" ? "À jour" : dependency.status === "unsupported" ? "Non suivie" : "À vérifier"}
+          </span>
+        </div>)}
+      </div>
+    </section>;
+  });
 }
 
 type DashboardProps = {
@@ -276,11 +309,11 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
     : overviewStatus === "warning"
       ? "Un signal mérite ton attention."
       : overviewStatus === "healthy"
-        ? "Les applications répondent normalement."
+        ? "Les contrôles essentiels réussissent."
         : "L’état des applications reste à confirmer.";
   const overviewDescription = applications.length === 0
     ? "Ajoute une application pour démarrer la surveillance."
-    : `${applications.filter((application) => application.status === "healthy").length} application${applications.length > 1 ? "s" : ""} saine${applications.length > 1 ? "s" : ""} sur ${applications.length}. Les incidents ne sont ouverts qu’après trois échecs consécutifs.`;
+    : `${applications.filter((application) => application.availabilityStatus === "healthy").length} réponse(s) HTTP normale(s) sur ${applications.length}. Le déploiement, les bibliothèques et le rendu ont leurs propres vérifications ci-dessous.`;
 
   async function enableNotifications() {
     if (!("Notification" in window) || !("serviceWorker" in navigator)) {
@@ -469,7 +502,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
 
           <section className="status-intro" id="overview" aria-labelledby="overview-title">
             <div>
-              <StatusDot status={overviewStatus} />
+              <StatusDot status={overviewStatus} label={`Contrôles essentiels : ${overviewStatus === "healthy" ? "réussis" : overviewStatus === "critical" ? "incident" : overviewStatus === "warning" ? "à surveiller" : "incomplets"}`} />
               <h2 id="overview-title">{overviewTitle}</h2>
               <p>{overviewDescription}</p>
             </div>
@@ -498,11 +531,29 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                   const outdatedDependencies = application.dependencies.filter((dependency) => dependency.status === "outdated");
                   const uncertainDependencies = application.dependencies.filter((dependency) => dependency.status === "unknown");
                   const untrackedDependencies = application.dependencies.filter((dependency) => dependency.status === "unsupported");
-                  const dependencyState = outdatedDependencies.length > 0
+                  const dependencyEvidenceFresh = application.repositoryScan.evidenceFresh;
+                  const dependencyCoverage = application.dependencyScanCoverage;
+                  const dependencyState = !dependencyEvidenceFresh || !dependencyCoverage?.complete
+                    ? "unknown"
+                    : outdatedDependencies.length > 0
                     ? "outdated"
                     : uncertainDependencies.length > 0 || untrackedDependencies.length > 0
                       ? "unknown"
                       : "current";
+                  const updateCounts = {
+                    runtime: outdatedDependencies.filter((dependency) => dependency.category === "runtime").length,
+                    development: outdatedDependencies.filter((dependency) => dependency.category === "development").length,
+                    tooling: outdatedDependencies.filter((dependency) => dependency.category === "tooling").length,
+                  };
+                  const dependencySummary = !dependencyEvidenceFresh
+                    ? repositoryScanLabels[application.repositoryScan.status]
+                    : !dependencyCoverage?.complete
+                      ? "Couverture des bibliothèques incomplète"
+                      : outdatedDependencies.length > 0
+                        ? `${updateCounts.runtime} exécution · ${updateCounts.development} développement · ${updateCounts.tooling} outils à mettre à jour`
+                        : uncertainDependencies.length + untrackedDependencies.length > 0
+                          ? "Versions à vérifier"
+                          : application.dependencies.length > 0 ? "Versions suivies à jour" : "Aucune dépendance suivie";
                   const deployment = application.productionDeployment;
                   const deploymentEnvironment = application.environment === "production"
                     ? "Production"
@@ -519,7 +570,9 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                     : releaseState === "drift"
                       ? "Le dépôt et le déploiement diffèrent"
                       : deployment
-                        ? "Comparaison à actualiser"
+                        ? deployment.confirmationState === "stale" ? "Confirmation du déploiement périmée"
+                          : deployment.confirmationState === "unverified" ? "Déploiement non confirmé"
+                            : "Comparaison à actualiser"
                         : "Déploiement non relié";
                   const repositoryCommitUrl = application.repositoryCommit
                     ? `https://github.com/${application.githubRepository}/commit/${application.repositoryCommit}`
@@ -528,7 +581,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                   <article className={`application-route application-route--${releaseState}`} id={`application-${application.id}`} key={application.id}>
                     <header className="application-route__header">
                       <div className="application-route__identity">
-                        <StatusDot status={application.status} />
+                        <StatusDot status={application.availabilityStatus} label={availabilityLabels[application.availabilityStatus]} />
                         <div>
                           <h3><ApplicationIcon name={application.name} url={application.url} /><span>{application.name}</span></h3>
                           <a href={application.url} target="_blank" rel="noreferrer">{application.url}</a>
@@ -537,7 +590,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                       <div className="application-route__signals" aria-label={`État de ${application.name}`}>
                         <span><small>Disponibilité mesurée</small><strong>{application.uptime30d === null ? "Inconnue" : `${application.uptime30d.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} %`}</strong></span>
                         <span><small>Couverture · 30 j max.</small><strong>{(application.coverage30d ?? 0).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %</strong></span>
-                        <span><small>Réponse</small><strong className={application.status === "warning" ? "metric-warning" : ""}>{application.latencyMs === null ? "En attente" : `${application.latencyMs} ms`}</strong></span>
+                        <span><small>Réponse HTTP</small><strong className={application.availabilityStatus === "warning" ? "metric-warning" : ""}>{application.latencyMs === null ? "En attente" : `${application.latencyMs} ms`}</strong></span>
                       </div>
                       <div className="application-route__actions">
                         <ScanApplicationButton applicationId={application.id} applicationName={application.name} />
@@ -560,7 +613,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                       <summary>
                         <span className={`application-summary__release application-summary__release--${releaseState}`}>{releaseLabel}</span>
                         <span className={dependencyState !== "current" ? "application-summary__warning" : ""}>
-                          {outdatedDependencies.length > 0 ? `${outdatedDependencies.length} mise(s) à jour` : dependencyState === "current" && application.dependencies.length > 0 ? "Bibliothèques à jour" : application.dependencies.length > 0 ? "Bibliothèques" : "Bibliothèques non détectées"}
+                          {dependencySummary}
                           {uncertainDependencies.length > 0 && ` · ${uncertainDependencies.length} à vérifier`}
                           {untrackedDependencies.length > 0 && ` · ${untrackedDependencies.length} non suivie(s)`}
                         </span>
@@ -568,9 +621,9 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                           {application.staleChecks ? `${application.staleChecks} contrôle(s) sans mesure récente` : application.status === "unknown" ? "Mesures manquantes" : "Mesures récentes"}
                         </span>
                         {application.renderingCheck && <span className={application.lastCheckStatus === "critical" || application.lastCheckStatus === "warning" ? "application-summary__warning" : ""}>
-                          Rendu : {!(application.renderingCheck.renderingUrl || application.renderingCheck.expectedText || application.renderingCheck.assetProbe)
+                          Rendu HTTP : {!(application.renderingCheck.renderingUrl || application.renderingCheck.expectedText || application.renderingCheck.assetProbe)
                             ? "non configuré"
-                            : application.lastCheckStatus === "healthy" ? "vérifié"
+                            : application.lastCheckStatus === "healthy" ? application.renderingCheck.expectedText || application.renderingCheck.assetProbe ? "contenu contrôlé" : "page accessible"
                               : application.lastCheckStatus === "critical" ? "en échec"
                                 : application.lastCheckStatus === "warning" ? "à surveiller" : "en attente"}
                         </span>}
@@ -607,15 +660,16 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                           {deployment.sourceUrl ? (
                             <a className="release-station__commit" href={deployment.sourceUrl} target="_blank" rel="noreferrer" title="Ouvrir le déploiement source">
                               <GitCommitHorizontal aria-hidden="true" />
-                              <span><small>Version déployée</small><strong>{deployment.shortCommit}</strong></span>
+                              <span><small>{deployment.confirmationState === "confirmed" ? "Version confirmée" : "Dernière version déclarée"}</small><strong>{deployment.shortCommit}</strong></span>
                             </a>
                           ) : (
                             <span className="release-station__commit">
                               <GitCommitHorizontal aria-hidden="true" />
-                              <span><small>Version déployée</small><strong>{deployment.shortCommit}</strong></span>
+                              <span><small>{deployment.confirmationState === "confirmed" ? "Version confirmée" : "Dernière version déclarée"}</small><strong>{deployment.shortCommit}</strong></span>
                             </span>
                           )}
                           <small className="release-station__date">Déployé le <LocalDateTime value={deployment.deployedAt} /> · {deploymentSourceLabels[deployment.source] ?? deployment.source}</small>
+                          <small className="release-station__date">Confirmation · <LocalDateTime value={deployment.verifiedAt} fallback="Aucune" />{deployment.confirmationState === "stale" ? " · à renouveler" : ""}</small>
                         </> : <>
                           <span className="release-station__commit release-station__commit--empty">
                             <GitCommitHorizontal aria-hidden="true" />
@@ -628,7 +682,7 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
 
                     <div className="application-route__footer">
                       <div className="technology-list" aria-label={`Technologies de ${application.name}`}>
-                        {application.technologies.slice(0, 3).map((technology) => technology.latestVersion ? (
+                        {application.technologies.slice(0, 3).map((technology) => application.repositoryScan.evidenceFresh && technology.latestVersion ? (
                           <span className="technology-list__update" key={technology.name} title={`Version ${technology.latestVersion} disponible`}>
                             {technology.name} {technology.version} → {technology.latestVersion}
                             <span className="sr-only"> : mise à jour disponible</span>
@@ -645,50 +699,31 @@ export function Dashboard({ applications, maintenanceTasks, maintenanceHistory, 
                           <strong>Bibliothèques</strong>
                         </span>
                         <span className="dependency-watch__state">
-                          {outdatedDependencies.length > 0
-                            ? `${outdatedDependencies.length} mise${outdatedDependencies.length > 1 ? "s" : ""} à jour`
-                            : uncertainDependencies.length > 0
-                              ? `${uncertainDependencies.length} à vérifier`
-                              : untrackedDependencies.length > 0
-                                ? `${untrackedDependencies.length} non suivie${untrackedDependencies.length > 1 ? "s" : ""}`
-                              : application.dependencies.length > 0
-                                ? "À jour"
-                                : "Aucune détectée"}
+                          {dependencySummary}
                         </span>
                         <span className="dependency-watch__date">Analysé · <LocalDateTime value={application.lastRepositoryScannedAt} fallback="Jamais analysé" /></span>
                         <ChevronRight className="dependency-watch__chevron" aria-hidden="true" />
                       </summary>
                       <div className="dependency-watch__body">
+                        <div className="collection-coverage" role="note">
+                          <strong>{repositoryScanLabels[application.repositoryScan.status]}</strong>
+                          <span>Dernière analyse réussie · <LocalDateTime value={application.lastRepositoryScannedAt} fallback="Aucune" /></span>
+                          {application.repositoryScan.attemptedAt && <span>Dernière tentative · <LocalDateTime value={application.repositoryScan.attemptedAt} /></span>}
+                          {application.repositoryScan.error && <span>{application.repositoryScan.error}</span>}
+                          <small>Périmètre : npm (package.json, package-lock.json) et Python (requirements.txt et requirements-*.txt). Les autres formats et les versions non résolues restent à vérifier. Ces versions proviennent du dépôt ; elles ne prouvent pas celles installées en production.</small>
+                          {!dependencyEvidenceFresh && <strong>Les résultats conservés ci-dessous doivent être reconfirmés.</strong>}
+                          {dependencyCoverage ? <>
+                            <span>{dependencyCoverage.manifestPaths.length} manifeste(s) · {dependencyCoverage.inspectedDependencies}/{dependencyCoverage.declaredDependencies} dépendance(s) inspectée(s) · {dependencyCoverage.complete ? "périmètre couvert" : "couverture incomplète"}</span>
+                            {dependencyCoverage.limitations.length > 0 && <ul>{dependencyCoverage.limitations.slice(0, 6).map((limitation, index) => <li key={`${limitation.code}:${limitation.path ?? ""}:${index}`}>{limitation.detail}{limitation.path ? ` · ${limitation.path}` : ""}</li>)}
+                              {dependencyCoverage.limitations.length > 6 && <li>{dependencyCoverage.limitations.length - 6} autre(s) limite(s) de couverture.</li>}
+                            </ul>}
+                          </> : <strong>Le périmètre de cette ancienne analyse n’est pas connu. Relance l’analyse pour le vérifier.</strong>}
+                          {outdatedDependencies.length > 0 && <span>{dependencyEvidenceFresh ? "Mises à jour observées" : "Dernières mises à jour observées"} · {updateCounts.runtime} exécution · {updateCounts.development} développement · {updateCounts.tooling} outils et migrations</span>}
+                        </div>
                         {application.dependencies.length > 0 ? (
-                          <div className="dependency-table">
-                            <div className="dependency-table__head" aria-hidden="true">
-                              <span>Bibliothèque</span><span>Version utilisée</span><span>Dernière</span><span>État</span>
-                            </div>
-                            {application.dependencies.map((dependency) => (
-                              <div className="dependency-table__row" key={`${dependency.ecosystem}:${dependency.manifestPath}:${dependency.name}`}>
-                                <span className="dependency-table__name">
-                                  <strong>{dependency.name}</strong>
-                                  <small title={dependency.packages && dependency.packages.length > 1 ? dependency.packages.join(", ") : undefined}>
-                                    {dependency.packages && dependency.packages.length > 1 ? `${dependency.packages.length} paquets · ` : ""}
-                                    {dependency.manifestPath}{dependency.development ? " · développement" : ""}
-                                  </small>
-                                </span>
-                                <span data-label="Version utilisée">{dependency.currentVersion ?? dependency.requestedRange}</span>
-                                <span data-label="Dernière">{dependency.latestVersion ?? "Indisponible"}</span>
-                                <span data-label="État" className={`dependency-status dependency-status--${dependency.status}`}>
-                                  {dependency.status === "outdated"
-                                    ? "À mettre à jour"
-                                    : dependency.status === "current"
-                                      ? "À jour"
-                                      : dependency.status === "unsupported"
-                                        ? "Non suivie"
-                                        : "À vérifier"}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
+                          <DependencyTables dependencies={application.dependencies} fresh={dependencyEvidenceFresh} />
                         ) : (
-                          <p className="dependency-watch__empty">Aucun <strong>package.json</strong> n’a été détecté dans ce dépôt.</p>
+                          <p className="dependency-watch__empty">Aucune dépendance suivie n’a été enregistrée. Consulte le périmètre et les limites de l’analyse ci-dessus.</p>
                         )}
                       </div>
                     </details>

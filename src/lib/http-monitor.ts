@@ -4,8 +4,9 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { assertLease, completeJob, type Lease } from "@/lib/job-queue";
+import { assertLease, completeJob, enqueueJob, type Lease } from "@/lib/job-queue";
 import { aggregateHealth } from "@/lib/monitoring-state";
+import { sameHttpCheckConfiguration } from "@/lib/application-status";
 import {
   applications,
   checks,
@@ -145,13 +146,13 @@ async function fetchTarget(initialTarget: string, timeoutSeconds: number, option
       continue;
     }
 
-    const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
     let body: Buffer | undefined;
     if (options.readBytes) {
       body = await readBody(response, options.readBytes);
     } else {
       await response.body?.cancel();
     }
+    const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
     return {
       statusCode: response.status,
       latencyMs,
@@ -200,8 +201,9 @@ function assetFailureSummary(error: unknown, resource: string) {
 }
 
 /**
- * Vérifie ce que voit réellement le visiteur : une page peut répondre HTTP 200
- * alors que ses images, servies par un processus Node saturé, ne se chargent plus.
+ * Sonde le HTML et une réponse d'image : une page peut répondre HTTP 200
+ * alors que ses images, servies par un processus Node saturé, ne répondent plus.
+ * Cette sonde HTTP n'exécute pas JavaScript et ne vérifie pas un rendu navigateur.
  * Sans page dédiée, la page d’accueil déjà téléchargée par le contrôle de disponibilité est réutilisée.
  */
 async function inspectRendering(check: RenderingCheck, homepage: { url: string; body?: Buffer }): Promise<RenderingResult> {
@@ -290,6 +292,7 @@ export async function runHttpCheck(checkId: string, lease: Lease): Promise<HttpC
       expectedText: checks.expectedText,
       assetProbe: checks.assetProbe,
       assetUrl: checks.assetUrl,
+      updatedAt: checks.updatedAt,
     })
     .from(checks)
     .innerJoin(applications, eq(applications.id, checks.applicationId))
@@ -350,6 +353,17 @@ export async function runHttpCheck(checkId: string, lease: Lease): Promise<HttpC
   await db.transaction(async (transaction) => {
     await assertLease(transaction, lease);
     await transaction.select({ id: applications.id }).from(applications).where(eq(applications.id, configuration.applicationId)).for("update");
+    const [currentCheck] = await transaction.select().from(checks).where(eq(checks.id, configuration.checkId)).for("update");
+    if (!currentCheck?.enabled || !sameHttpCheckConfiguration(configuration, currentCheck)) {
+      // An existing reservation can have prevented the settings form from enqueuing its test.
+      // Release it before reserving a result for the new settings, with no stale observation.
+      await completeJob(transaction, lease);
+      if (currentCheck?.enabled) await enqueueJob({
+        workspaceId: configuration.workspaceId, kind: "check", key: `check:${configuration.checkId}`,
+        payload: { checkId: configuration.checkId },
+      }, transaction);
+      return;
+    }
     await transaction.insert(observations).values({
       checkId: configuration.checkId,
       status,

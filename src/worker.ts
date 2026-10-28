@@ -16,7 +16,10 @@ if (childId) {
         const { runHttpCheck } = await import("@/lib/http-monitor");
         await runHttpCheck(job.payload.checkId, job);
       } else if (job.kind === "scan") {
-        if (job.payload.githubTokenCheck === "true") {
+        if (job.payload.deploymentSync === "true") {
+          const { synchronizeDeployments } = await import("@/lib/deployment-sync");
+          await synchronizeDeployments(job.workspaceId, job);
+        } else if (job.payload.githubTokenCheck === "true") {
           const { checkStoredGitHubToken } = await import("@/lib/github-integration");
           await checkStoredGitHubToken(job.workspaceId, job);
         } else {

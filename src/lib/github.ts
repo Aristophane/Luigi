@@ -119,7 +119,8 @@ export async function inspectGitHubRepository(repository: string, branch: string
     throw new Error("REPOSITORY_TREE_TRUNCATED");
   }
   const repositoryFiles: GitHubContentEntry[] = repositoryTree.tree
-    .filter((entry) => entry.type === "blob" && (entry.size ?? 0) <= 1_000_000)
+    // Keep size metadata so scanners can explicitly report skipped large files.
+    .filter((entry) => entry.type === "blob")
     .map((entry) => ({
       name: entry.path.split("/").at(-1) ?? entry.path,
       path: entry.path,

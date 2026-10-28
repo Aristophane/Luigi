@@ -53,6 +53,7 @@ export async function scheduleMonitoring() {
 export async function schedulerTick() {
   await scheduleMonitoring();
   await scheduleGitHubTokenChecks();
+  await scheduleDeploymentSync();
   const now = new Date();
   // Cached states become unknown even when no producer is sending data.
   await db.execute(sql`update checks set status = 'unknown' where enabled and status <> 'unknown'
@@ -61,6 +62,24 @@ export async function schedulerTick() {
     await evaluateMonitoringSilences(workspace.id, now);
   }
   await pulseWorker("scheduler");
+}
+
+export async function scheduleDeploymentSync() {
+  if (!process.env.DEPLOYMENT_SYNC_TARGETS?.trim()) return 0;
+  try {
+    const configured = JSON.parse(process.env.DEPLOYMENT_SYNC_TARGETS);
+    if (Array.isArray(configured) && configured.length === 0) return 0;
+  } catch { /* The scan job reports malformed integration settings without stopping HTTP scheduling. */ }
+  const interval = Math.max(60, Math.min(3600, Number(process.env.DEPLOYMENT_SYNC_INTERVAL_SECONDS) || 300));
+  const cutoff = new Date(Date.now() - interval * 1000).toISOString();
+  let queued = 0;
+  for (const workspace of await db.select({ id: workspaces.id }).from(workspaces)) {
+    const key = `deployment-sync:${workspace.id}`;
+    const [recent] = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.key, key),
+      sql`(${jobs.status} in ('queued', 'running') or ${jobs.createdAt} > ${cutoff})`)).limit(1);
+    if (!recent && await enqueueJob({ workspaceId: workspace.id, kind: "scan", key, payload: { deploymentSync: "true" } })) queued++;
+  }
+  return queued;
 }
 
 export async function scheduleGitHubTokenChecks() {

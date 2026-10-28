@@ -13,11 +13,17 @@ export const frameworkPackages: Record<string, string> = {
   astro: "Astro",
 };
 
-const technologyPackages = new Map(Object.entries(frameworkPackages).map(([packageName, technology]) => [technology, packageName]));
+const technologyPackages = new Map([
+  ...Object.entries(frameworkPackages).map(([packageName, technology]) => [technology, packageName] as const),
+  ["Flask", "flask"], ["FastAPI", "fastapi"], ["Django", "django"],
+]);
+
+const pythonFrameworkPackages: Record<string, string> = { flask: "Flask", fastapi: "FastAPI", django: "Django" };
 
 type DependencyStatus = "current" | "outdated" | "unknown" | "unsupported";
 
 export type GroupableDependency = {
+  ecosystem?: string;
   name: string;
   manifestPath: string;
   currentVersion?: string | null;
@@ -49,6 +55,7 @@ function releaseFamily(name: string) {
 }
 
 export function dependencyUpdateKind(dependency: GroupableDependency) {
+  if (dependency.ecosystem === "pypi") return undefined;
   if (dependency.status !== "outdated" || !dependency.latestVersion || !valid(dependency.latestVersion)) return undefined;
   try {
     const baseline = dependency.currentVersion && valid(dependency.currentVersion)
@@ -67,25 +74,29 @@ function lowestVersion(versions: Array<string | null | undefined>) {
     .sort(compare)[0];
 }
 
+function dependencyFramework(dependency: GroupableDependency) {
+  return (dependency.ecosystem === "pypi" ? pythonFrameworkPackages : frameworkPackages)[dependency.name];
+}
+
 export function groupDependencies<T extends GroupableDependency>(dependencies: T[]): DependencyGroup<T>[] {
   const buckets = new Map<string, T[]>();
   for (const dependency of dependencies) {
-    const family = releaseFamily(dependency.name);
+    const family = dependency.ecosystem === "pypi" ? undefined : releaseFamily(dependency.name);
     const key = family
-      ? [dependency.manifestPath, family, dependency.status, dependency.latestVersion ?? ""].join("\u0000")
-      : [dependency.manifestPath, dependency.name].join("\u0000");
+      ? [dependency.ecosystem ?? "npm", dependency.manifestPath, family, dependency.status, dependency.latestVersion ?? ""].join("\u0000")
+      : [dependency.ecosystem ?? "npm", dependency.manifestPath, dependency.name].join("\u0000");
     buckets.set(key, [...buckets.get(key) ?? [], dependency]);
   }
 
   return [...buckets.values()].map((members) => {
     const sortedMembers = [...members].sort((left, right) => left.name.localeCompare(right.name));
-    const frameworkMember = sortedMembers.find((member) => frameworkPackages[member.name]);
+    const frameworkMember = sortedMembers.find((member) => dependencyFramework(member));
     const lead = frameworkMember ?? sortedMembers[0];
     const updateKinds = sortedMembers.map(dependencyUpdateKind);
     return {
       lead,
       label: sortedMembers.length > 1
-        ? (frameworkMember ? frameworkPackages[frameworkMember.name] : releaseFamily(lead.name) ?? lead.name)
+        ? (frameworkMember ? dependencyFramework(frameworkMember)! : releaseFamily(lead.name) ?? lead.name)
         : lead.name,
       members: sortedMembers,
       manifestPath: lead.manifestPath,
@@ -118,7 +129,9 @@ export function technologyDependency<T extends GroupableDependency>(
 ) {
   const packageName = technologyPackages.get(technology.name);
   if (!packageName) return undefined;
-  const candidates = dependencies.filter((dependency) => dependency.name === packageName);
+  const pythonTechnology = ["Flask", "FastAPI", "Django"].includes(technology.name);
+  const candidates = dependencies.filter((dependency) => dependency.name === packageName
+    && (pythonTechnology ? dependency.ecosystem === "pypi" : dependency.ecosystem !== "pypi"));
   return candidates.find((dependency) => technology.evidence?.startsWith(`${dependency.manifestPath} · `))
     ?? candidates.find((dependency) => dependency.status === "outdated")
     ?? candidates[0];

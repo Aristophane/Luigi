@@ -12,7 +12,7 @@ import {
   notifications,
   technologies,
 } from "@/db/schema";
-import { inspectNpmDependencies, type DependencyFreshness } from "@/lib/dependency-freshness";
+import { inspectDependencies, type DependencyFreshness } from "@/lib/dependency-freshness";
 import { groupDependencies, type DependencyGroup } from "@/lib/dependency-groups";
 import { withGitHubToken } from "@/lib/github-integration";
 import { createOrRefreshNotification, resolveNotification } from "@/lib/notifications";
@@ -80,14 +80,14 @@ function dependencyKey(dependency: { ecosystem: string; manifestPath: string; na
   return `${dependency.ecosystem}:${dependency.manifestPath}:${dependency.name}`;
 }
 
-function dependencyFindingFingerprint(applicationId: string, manifestPath: string, name: string) {
+function dependencyFindingFingerprint(applicationId: string, manifestPath: string, name: string, ecosystem = "npm") {
   const location = manifestPath === "package.json" ? "" : `:${encodeURIComponent(manifestPath)}`;
-  return `application:${applicationId}:dependency:npm${location}:${name}:outdated`;
+  return `application:${applicationId}:dependency:${ecosystem}${location}:${name}:outdated`;
 }
 
-function dependencyNotificationFingerprint(applicationId: string, manifestPath: string, name: string) {
+function dependencyNotificationFingerprint(applicationId: string, manifestPath: string, name: string, ecosystem = "npm") {
   const location = manifestPath === "package.json" ? "" : `:${encodeURIComponent(manifestPath)}`;
-  return `dependency-update:${applicationId}:npm${location}:${name}`;
+  return `dependency-update:${applicationId}:${ecosystem}${location}:${name}`;
 }
 
 type DependencyNotification = {
@@ -160,7 +160,7 @@ export async function syncDependencyFindings(
   const notificationEvents: DependencyNotification[] = [];
 
   for (const update of updates) {
-    const fingerprint = dependencyFindingFingerprint(applicationId, update.manifestPath, update.lead.name);
+    const fingerprint = dependencyFindingFingerprint(applicationId, update.manifestPath, update.lead.name, update.lead.ecosystem);
     expectedFingerprints.add(fingerprint);
     const previousFinding = findingsByFingerprint.get(fingerprint);
     const severity = update.updateKind === "major" ? "medium" : "low";
@@ -240,7 +240,7 @@ export async function syncDependencyFindings(
     const regroupedLegacyFinding = previousFinding !== undefined
       && !Array.isArray(previousFinding.metadata.packages)
       && update.members.length > 1;
-    const notificationFingerprint = dependencyNotificationFingerprint(applicationId, update.manifestPath, update.lead.name);
+    const notificationFingerprint = dependencyNotificationFingerprint(applicationId, update.manifestPath, update.lead.name, update.lead.ecosystem);
     if (
       !previousFinding
       || previousFinding.resolvedAt
@@ -266,9 +266,10 @@ export async function syncDependencyFindings(
     const packages = trackedPackages(finding.metadata);
     if (packages.length === 0) continue;
     const manifestPath = typeof finding.metadata.manifestPath === "string" ? finding.metadata.manifestPath : "package.json";
-    const keys = packages.map((name) => dependencyKey({ ecosystem: "npm", manifestPath, name }));
+    const ecosystem = typeof finding.metadata.ecosystem === "string" ? finding.metadata.ecosystem : "npm";
+    const keys = packages.map((name) => dependencyKey({ ecosystem, manifestPath, name }));
     // Une version inconnue, ou non vérifiée au-delà de la limite d'analyse, ne permet pas de conclure.
-    if (keys.some((key) => declaredKeys.has(key) && (freshnessByKey.get(key)?.status ?? "unknown") === "unknown")) continue;
+    if (keys.some((key) => declaredKeys.has(key) && !["current", "outdated"].includes(freshnessByKey.get(key)?.status ?? "unknown"))) continue;
 
     const label = typeof finding.metadata.label === "string" ? finding.metadata.label : packages[0];
     const replacements = [...new Set(keys.flatMap((key) => updatesByPackage.get(key)?.label ?? []))];
@@ -293,6 +294,7 @@ export async function syncDependencyFindings(
         applicationId,
         manifestPath,
         typeof finding.metadata.package === "string" ? finding.metadata.package : packages[0],
+        ecosystem,
       ),
     });
   }
@@ -348,17 +350,12 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
 
   const scan = await withGitHubToken(workspaceId, (token) =>
     scanGitHubTechnologies(application.githubRepository, application.githubBranch, token));
-  const freshness = await inspectNpmDependencies(scan.dependencies);
+  const freshness = await inspectDependencies(scan.dependencies);
   const checkedAt = new Date();
   const existingDependencies = await db
-    .select({
-      id: dependencies.id,
-      ecosystem: dependencies.ecosystem,
-      name: dependencies.name,
-      manifestPath: dependencies.manifestPath,
-    })
+    .select()
     .from(dependencies)
-    .where(and(eq(dependencies.applicationId, application.id), eq(dependencies.ecosystem, "npm")));
+    .where(and(eq(dependencies.applicationId, application.id), inArray(dependencies.ecosystem, ["npm", "pypi"])));
   const existingFindings = await db
     .select({
       id: findings.id,
@@ -378,6 +375,18 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
     .where(and(eq(notifications.workspaceId, workspaceId), isNull(notifications.resolvedAt)));
   const openNotificationFingerprints = new Set(existingNotifications.flatMap((notification) => notification.fingerprint ? [notification.fingerprint] : []));
   const manifestDependencyKeys = new Set(scan.dependencies.map(dependencyKey));
+  // An unreadable or partially understood manifest is not evidence that a
+  // previously declared package was removed. Invalidate its cached state.
+  const incompleteManifests = new Set(scan.coverage.limitations
+    .filter((limitation) => limitation.code === "oversized_manifest" || limitation.code === "unsupported_requirement")
+    .flatMap((limitation) => limitation.path ? [limitation.path] : []));
+  const preservedDependencies = existingDependencies.filter((dependency) => incompleteManifests.has(dependency.manifestPath)
+    && !manifestDependencyKeys.has(dependencyKey(dependency)));
+  for (const dependency of preservedDependencies) {
+    freshness.push({ ...dependency, ecosystem: dependency.ecosystem as "npm" | "pypi", currentVersion: dependency.currentVersion ?? undefined,
+      latestVersion: undefined, status: "unknown", evidence: `${dependency.evidence} · manifeste partiellement analysé` });
+    manifestDependencyKeys.add(dependencyKey(dependency));
+  }
 
   const sync = await db.transaction(async (transaction) => {
     await assertLease(transaction, lease);
@@ -387,6 +396,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
         repositoryCommit: scan.commitSha,
         repositoryCommitMessage: scan.commitMessage,
         lastRepositoryScannedAt: checkedAt,
+        dependencyScanCoverage: scan.coverage,
         updatedAt: checkedAt,
       })
       .where(eq(applications.id, application.id));
@@ -430,13 +440,13 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
         .onConflictDoUpdate({
           target: [dependencies.applicationId, dependencies.ecosystem, dependencies.manifestPath, dependencies.name],
           set: {
-            currentVersion: dependency.currentVersion,
+            currentVersion: dependency.currentVersion ?? null,
             requestedRange: dependency.requestedRange,
-            latestVersion: dependency.latestVersion,
+            latestVersion: dependency.latestVersion ?? null,
             status: dependency.status,
             development: dependency.development,
             evidence: dependency.evidence,
-            lastCheckedAt: dependency.status === "unsupported" ? undefined : checkedAt,
+            lastCheckedAt: dependency.status === "unsupported" ? null : checkedAt,
             updatedAt: checkedAt,
           },
         });
@@ -451,7 +461,7 @@ export async function scanStoredApplication(workspaceId: string, applicationId: 
       workspaceId,
       applicationId: application.id,
       freshness,
-      declaredDependencies: scan.dependencies,
+      declaredDependencies: [...scan.dependencies, ...preservedDependencies],
       existingFindings,
       openNotificationFingerprints,
       checkedAt,

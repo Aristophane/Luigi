@@ -19,7 +19,7 @@ export function RenderingCheckPanel({ application }: { application: MonitoredApp
   const stateLabel = !configured
     ? "Non configuré"
     : application.lastCheckStatus === "healthy"
-      ? "Rendu vérifié"
+      ? settings.expectedText || settings.assetProbe ? "Contrôles HTTP réussis" : "Page HTTP accessible"
       : application.lastCheckStatus === "warning"
         ? "À surveiller"
         : application.lastCheckStatus === "critical"
@@ -31,21 +31,21 @@ export function RenderingCheckPanel({ application }: { application: MonitoredApp
       <summary>
         <span className="dependency-watch__title">
           {tone === "critical" ? <ImageOff aria-hidden="true" /> : <ScanEye aria-hidden="true" />}
-          <strong>Contrôle du rendu</strong>
+          <strong>Contrôle HTTP du contenu</strong>
         </span>
         <span className="dependency-watch__state">{stateLabel}</span>
-        <span className="dependency-watch__date">Contrôlé · <LocalDateTime value={application.lastCheckedAt} format="precise" fallback="En attente" /></span>
+        <span className="dependency-watch__date">Dernière mesure · <LocalDateTime value={application.lastCheckedAt} format="precise" fallback="En attente" /></span>
         <ChevronRight className="dependency-watch__chevron" aria-hidden="true" />
       </summary>
       <div className="dependency-watch__body">
-        {configured && application.lastCheckDetail && (
+        {configured && application.lastCheckStatus !== "unknown" && application.lastCheckDetail && (
           <p className="rendering-watch__last">Dernier résultat : {application.lastCheckDetail}</p>
         )}
         <form className="app-form rendering-form" action={action}>
           <input type="hidden" name="applicationId" value={application.id} />
           <p className="rendering-form__intro">
-            Une page peut répondre HTTP 200 alors que ses images ne se chargent plus. Un échec de ces vérifications
-            compte comme un échec du contrôle et ouvre un incident au même seuil.
+            Périmètre : HTML de la page et réponse d’une image. JavaScript, affichage dans le navigateur et parcours
+            métier restent à tester séparément. Un échec de ces vérifications compte dans le seuil d’incident.
           </p>
           <label>
             <span>Page à contrôler</span>
@@ -77,7 +77,7 @@ export function RenderingCheckPanel({ application }: { application: MonitoredApp
           <label className="checkbox-field">
             <input name="assetProbe" type="checkbox" defaultChecked={settings.assetProbe} />
             <span>
-              Vérifier qu’une image de la page se charge
+              Vérifier la réponse HTTP d’une image de la page
               <small className="field-hint">
                 Luigi choisit en priorité l’image principale redimensionnée à la volée (optimiseur Next.js, serveur
                 d’assets Vendure, CDN d’images) plutôt qu’un logo statique.

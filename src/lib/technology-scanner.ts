@@ -1,5 +1,8 @@
 import { frameworkPackages } from "@/lib/dependency-groups";
 import { getGitHubFile, inspectGitHubRepository } from "@/lib/github";
+import { valid, validRange } from "semver";
+import { dependencyInspectionLimit, type DependencyEcosystem, type DependencyScanCoverage, type DependencyScanLimitation } from "@/lib/dependency-scan";
+import { parsePythonRequirements } from "@/lib/python-requirements";
 
 export type DetectedTechnology = {
   name: string;
@@ -8,13 +11,14 @@ export type DetectedTechnology = {
 };
 
 export type DetectedDependency = {
-  ecosystem: "npm";
+  ecosystem: DependencyEcosystem;
   name: string;
   manifestPath: string;
   requestedRange: string;
   currentVersion?: string;
   development: boolean;
   evidence: string;
+  unsupportedReason?: string;
 };
 
 const supportedManifests = new Set([
@@ -30,6 +34,12 @@ const supportedManifests = new Set([
   ".node-version",
   ".python-version",
 ]);
+
+const unsupportedNpmLocks = new Set(["pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb", "npm-shrinkwrap.json"]);
+
+function isRequirementsFile(name: string) {
+  return /^requirements(?:[-_.][\w.-]+)?\.txt$/i.test(name);
+}
 
 function cleanVersion(value?: string) {
   return value?.trim().replace(/^[~^<>=\sv]+/i, "") || undefined;
@@ -186,7 +196,12 @@ function parseManifest(name: string, content: string, commitSha: string) {
 
   try {
     if (lowerName === "package.json") return packageJsonDetections(content, evidence);
-    if (lowerName === "pyproject.toml" || lowerName === "requirements.txt") return pythonDetections(content, evidence);
+    if (lowerName === "pyproject.toml") return pythonDetections(content, evidence);
+    if (isRequirementsFile(lowerName)) {
+      const frameworks: Record<string, string> = { django: "Django", fastapi: "FastAPI", flask: "Flask" };
+      return parsePythonRequirements(content).dependencies.flatMap((dependency) => frameworks[dependency.name]
+        ? [{ name: frameworks[dependency.name], version: dependency.currentVersion, evidence }] : []);
+    }
     if (lowerName === "composer.json") return composerDetections(content, evidence);
     if (lowerName === ".nvmrc" || lowerName === ".node-version") return [{ name: "Node.js", version: cleanVersion(content), evidence }];
     if (lowerName === ".python-version") return [{ name: "Python", version: cleanVersion(content), evidence }];
@@ -208,28 +223,41 @@ function parseManifest(name: string, content: string, commitSha: string) {
 
 export async function scanGitHubTechnologies(repository: string, branch: string, token?: string) {
   const inspection = await inspectGitHubRepository(repository, branch, token);
-  const ignoredDirectories = new Set([".git", ".next", ".turbo", "build", "coverage", "dist", "node_modules", "vendor"]);
-  const manifests = inspection.repositoryFiles.filter((entry) => (
-    supportedManifests.has(entry.name.toLowerCase())
-    && !entry.path.split("/").some((segment) => ignoredDirectories.has(segment.toLowerCase()))
-  ));
+  const ignoredDirectories = new Set([".git", ".next", ".turbo", ".venv", "venv", "__pycache__", "site-packages", "build", "coverage", "dist", "node_modules", "vendor"]);
+  const repositoryFiles = inspection.repositoryFiles.filter((entry) => !entry.path.split("/").some((segment) => ignoredDirectories.has(segment.toLowerCase())));
+  const limitations: DependencyScanLimitation[] = repositoryFiles
+    .filter((entry) => unsupportedNpmLocks.has(entry.name.toLowerCase()))
+    .map((entry) => ({ code: "unsupported_lockfile", path: entry.path, ecosystem: "npm", detail: "Ce lockfile n’est pas lu ; les versions installées ne sont pas confirmées par ce fichier." }));
+  const manifestEntries = repositoryFiles.filter((entry) => supportedManifests.has(entry.name.toLowerCase()) || isRequirementsFile(entry.name));
+  const manifests = manifestEntries.filter((entry) => {
+    if (entry.size <= 1_000_000) return true;
+    limitations.push({ code: "oversized_manifest", path: entry.path, detail: "Fichier non analysé : taille supérieure à 1 Mo." });
+    return false;
+  });
   if (manifests.length > 200) throw new Error("TOO_MANY_MANIFESTS");
   const files: Array<{ manifest: (typeof manifests)[number]; content: string }> = [];
   for (let index = 0; index < manifests.length; index += 12) {
     files.push(...await Promise.all(manifests.slice(index, index + 12).map(async (manifest) => ({
       manifest,
-      content: await getGitHubFile(repository, manifest.path, branch, token),
+      content: await getGitHubFile(repository, manifest.path, inspection.commitSha, token),
     }))));
   }
   const detections = new Map<string, DetectedTechnology>();
   const dependencies = new Map<string, DetectedDependency>();
   const packageLocks = files
     .filter(({ manifest }) => manifest.name.toLowerCase() === "package-lock.json")
-    .map((file) => ({ ...file, versions: packageLockVersions(file.content) }));
+    .map((file) => {
+      try { JSON.parse(file.content); }
+      catch { limitations.push({ code: "unsupported_requirement", path: file.manifest.path, ecosystem: "npm", detail: "Lockfile npm illisible : les versions verrouillées ne sont pas confirmées par ce fichier." }); }
+      return { ...file, versions: packageLockVersions(file.content) };
+    });
 
   for (const { manifest, content } of files) {
     for (const detection of parseManifest(manifest.path, content, inspection.commitSha)) {
       addDetection(detections, detection);
+    }
+    if (["pyproject.toml", "composer.json", "go.mod", "cargo.toml"].includes(manifest.name.toLowerCase())) {
+      limitations.push({ code: "unsupported_requirement", path: manifest.path, detail: "Technologies détectées uniquement : les dépendances de ce format de manifeste ne sont pas suivies." });
     }
     if (manifest.name.toLowerCase() === "package.json") {
       const manifestDirectory = directoryOf(manifest.path);
@@ -250,7 +278,46 @@ export async function scanGitHubTechnologies(repository: string, branch: string,
         dependencies.set(`${dependency.ecosystem}:${dependency.manifestPath}:${dependency.name}`, dependency);
       }
     }
+    if (isRequirementsFile(manifest.name)) {
+      const parsed = parsePythonRequirements(content);
+      for (const detail of parsed.limitations) limitations.push({ code: "unsupported_requirement", path: manifest.path, ecosystem: "pypi", detail });
+      for (const requirement of parsed.dependencies) {
+        const dependency: DetectedDependency = {
+          ...requirement,
+          ecosystem: "pypi",
+          manifestPath: manifest.path,
+          development: /(?:^|[/_.-])(?:dev|development|test|tests)(?:[/_.-]|$)/i.test(manifest.path),
+          evidence: `${manifest.path} · ${inspection.commitSha.slice(0, 7)}${requirement.unsupportedReason ? ` · ${requirement.unsupportedReason}` : ""}`,
+        };
+        const key = `${dependency.ecosystem}:${dependency.manifestPath}:${dependency.name}`;
+        const previous = dependencies.get(key);
+        if (previous && (previous.requestedRange !== dependency.requestedRange || previous.unsupportedReason)) {
+          dependency.currentVersion = undefined;
+          dependency.unsupportedReason = "Plusieurs contraintes pour ce paquet dans le même manifeste : résolution non confirmée.";
+          limitations.push({ code: "unsupported_requirement", path: manifest.path, ecosystem: "pypi", detail: `${dependency.name} : ${dependency.unsupportedReason}` });
+        }
+        dependencies.set(key, dependency);
+      }
+    }
   }
+
+  for (const dependency of dependencies.values()) {
+    if (dependency.ecosystem === "npm" && !validRange(dependency.requestedRange)) {
+      dependency.unsupportedReason = "Référence npm non suivie (tag, alias, URL ou protocole local).";
+      limitations.push({ code: "unsupported_requirement", path: dependency.manifestPath, ecosystem: "npm", detail: `${dependency.name} : ${dependency.unsupportedReason}` });
+    } else if (!dependency.currentVersion && !dependency.unsupportedReason && !(dependency.ecosystem === "npm" && valid(dependency.requestedRange))) {
+      limitations.push({ code: "missing_lockfile", path: dependency.manifestPath, ecosystem: dependency.ecosystem, detail: "Certaines versions utilisées ne sont pas verrouillées dans un fichier pris en charge ; une contrainte compatible ne prouve pas qu’elles sont à jour." });
+    }
+  }
+  if (dependencies.size > dependencyInspectionLimit) limitations.push({ code: "dependency_limit", detail: `${dependencyInspectionLimit} dépendances au maximum interrogées ; les autres restent à vérifier.` });
+  const uniqueLimitations = [...new Map(limitations.map((limitation) => [JSON.stringify(limitation), limitation])).values()];
+  const coverage: DependencyScanCoverage = {
+    complete: uniqueLimitations.length === 0,
+    manifestPaths: manifestEntries.map((entry) => entry.path),
+    declaredDependencies: dependencies.size,
+    inspectedDependencies: Math.min(dependencies.size, dependencyInspectionLimit),
+    limitations: uniqueLimitations,
+  };
 
   return {
     repository: inspection.metadata,
@@ -258,5 +325,6 @@ export async function scanGitHubTechnologies(repository: string, branch: string,
     commitMessage: inspection.commitMessage,
     technologies: [...detections.values()],
     dependencies: [...dependencies.values()],
+    coverage,
   };
 }

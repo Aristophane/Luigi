@@ -1,5 +1,5 @@
 import { Dashboard } from "@/components/dashboard";
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   applications as applicationsTable,
@@ -7,6 +7,7 @@ import {
   dependencies as dependenciesTable,
   deployments,
   integrations,
+  jobs,
   agents,
   servers,
   maintenanceTasks as maintenanceTasksTable,
@@ -24,6 +25,8 @@ import { aggregateHealth, isFresh } from "@/lib/monitoring-state";
 import { applicationCoverage } from "@/lib/coverage";
 import { readiness } from "@/lib/readiness";
 import { readGitHubTokenHealth, repositoryDeploymentMatch } from "@/lib/github-token-health";
+import { dependencyCategory, repositoryScanState, type DependencyCategory } from "@/lib/application-status";
+import { deploymentConfirmationState } from "@/lib/deployment-health";
 
 export const dynamic = "force-dynamic";
 
@@ -58,11 +61,25 @@ export default async function Home() {
         source: deployments.source,
         sourceUrl: deployments.sourceUrl,
         deployedAt: deployments.deployedAt,
+        verifiedAt: deployments.verifiedAt,
+        verificationSource: deployments.verificationSource,
+        branch: deployments.branch,
+        environment: deployments.environment,
       })
       .from(deployments)
-      .where(inArray(deployments.applicationId, applicationIds))
-      .orderBy(deployments.applicationId, desc(deployments.deployedAt))
+      .innerJoin(applicationsTable, eq(applicationsTable.id, deployments.applicationId))
+      .where(and(inArray(deployments.applicationId, applicationIds),
+        or(isNull(deployments.branch), eq(deployments.branch, applicationsTable.githubBranch)),
+        or(isNull(deployments.environment), eq(deployments.environment, applicationsTable.environment))))
+      .orderBy(deployments.applicationId, sql`${deployments.verifiedAt} desc nulls last`, desc(deployments.deployedAt))
     : [];
+  const latestScanJobs = applicationIds.length > 0
+    ? await db.selectDistinctOn([jobs.key], {
+      key: jobs.key, status: jobs.status, attempts: jobs.attempts, createdAt: jobs.createdAt, completedAt: jobs.completedAt, lastError: jobs.lastError,
+    }).from(jobs).where(and(eq(jobs.kind, "scan"), inArray(jobs.key, applicationIds.map((id) => `scan:${id}`))))
+      .orderBy(jobs.key, desc(jobs.createdAt), desc(jobs.id))
+    : [];
+  const scanIntervalHours = Math.max(1, Math.min(168, Number(process.env.DEPENDENCY_SCAN_INTERVAL_HOURS) || 24));
   const uptimeMetrics = await applicationCoverage(workspaceId);
   const latestObservations = applicationIds.length > 0
     ? await db
@@ -71,6 +88,7 @@ export default async function Home() {
         applicationId: checks.applicationId,
         latencyMs: observations.latencyMs,
         status: observations.status,
+        statusCode: observations.statusCode,
         detail: observations.detail,
         observedAt: observations.observedAt,
       })
@@ -87,6 +105,7 @@ export default async function Home() {
         status: checks.status,
         lastCheckedAt: checks.lastCheckedAt,
         intervalSeconds: checks.intervalSeconds,
+        latencyWarningMs: checks.latencyWarningMs,
         enabled: checks.enabled,
         essential: checks.essential,
         kind: checks.kind,
@@ -188,6 +207,10 @@ export default async function Home() {
     const latest = latestObservations.find((observation) => observation.checkId === httpCheck?.id);
     const status = aggregateHealth(applicationChecks);
     const fresh = Boolean(httpCheck && isFresh(httpCheck.lastCheckedAt, httpCheck.intervalSeconds));
+    const availabilityStatus: HealthStatus = !fresh || !latest ? "unknown"
+      : latest.statusCode !== null && latest.statusCode >= 200 && latest.statusCode < 400
+        ? (latest.latencyMs ?? 0) >= (httpCheck?.latencyWarningMs ?? 1500) ? "warning" : "healthy"
+        : "critical";
     const productionDeployment = latestDeployments.find((deployment) => deployment.applicationId === application.id);
     const applicationDependencies = persistedDependencies.filter((dependency) => dependency.applicationId === application.id);
     return {
@@ -195,6 +218,7 @@ export default async function Home() {
       name: application.name,
       environment: application.environment,
       status,
+      availabilityStatus,
       coverage30d: uptime?.coverage30d ?? 0,
       collectionGaps: uptime?.collectionGaps ?? 0,
       missingMinutes: uptime?.missingMinutes ?? 0,
@@ -210,6 +234,9 @@ export default async function Home() {
       lastCheckStatus: fresh ? latest?.status ?? "unknown" : "unknown",
       lastCheckDetail: latest?.detail ?? undefined,
       lastRepositoryScannedAt: application.lastRepositoryScannedAt?.toISOString(),
+      repositoryScan: repositoryScanState(application.lastRepositoryScannedAt,
+        latestScanJobs.find((job) => job.key === `scan:${application.id}`), scanIntervalHours, renderedAt),
+      dependencyScanCoverage: application.dependencyScanCoverage ?? undefined,
       renderingCheck: httpCheck ? {
         renderingUrl: httpCheck.renderingUrl ?? undefined,
         expectedText: httpCheck.expectedText ?? undefined,
@@ -222,8 +249,13 @@ export default async function Home() {
         deployedAt: productionDeployment.deployedAt.toISOString(),
         source: productionDeployment.source,
         sourceUrl: productionDeployment.sourceUrl ?? undefined,
+        confirmationState: deploymentConfirmationState(productionDeployment.verifiedAt, renderedAt),
+        verifiedAt: productionDeployment.verifiedAt?.toISOString(),
+        verificationSource: productionDeployment.verificationSource ?? undefined,
+        branch: productionDeployment.branch ?? undefined,
+        environment: productionDeployment.environment ?? undefined,
         matchesRepositoryHead: repositoryDeploymentMatch(application.repositoryCommit, application.lastRepositoryScannedAt,
-          productionDeployment.commitSha, productionDeployment.deployedAt, githubTokenHealth, renderedAt),
+          productionDeployment.commitSha, productionDeployment.deployedAt, githubTokenHealth, renderedAt, productionDeployment.verifiedAt),
       } : undefined,
       technologies: persistedTechnologies
         .filter((technology) => technology.applicationId === application.id)
@@ -238,9 +270,11 @@ export default async function Home() {
           };
         })
         .sort((left, right) => Number(Boolean(right.latestVersion)) - Number(Boolean(left.latestVersion))),
-      dependencies: groupDependencies(applicationDependencies)
-        .sort(compareDependencyGroups)
-        .map((group) => ({
+      dependencies: (["runtime", "development", "tooling"] satisfies DependencyCategory[])
+        .flatMap((category) => groupDependencies(applicationDependencies.filter((dependency) => dependencyCategory(dependency) === category))
+          .map((group) => ({ group, category })))
+        .sort((left, right) => compareDependencyGroups(left.group, right.group))
+        .map(({ group, category }) => ({
           name: group.label,
           packages: group.members.map((member) => member.name),
           ecosystem: group.lead.ecosystem,
@@ -251,6 +285,7 @@ export default async function Home() {
           status: group.status,
           updateKind: group.updateKind,
           development: group.development,
+          category,
           evidence: group.lead.evidence,
         })),
     };

@@ -26,9 +26,19 @@ test("legacy and stale token checks never claim a verified connection", () => {
 
 test("old repository snapshots cannot claim that a newer deployment is behind", () => {
   const deployedAt = new Date("2026-10-12T11:20:00Z");
-  assert.equal(repositoryDeploymentMatch("38630ac", new Date("2026-10-03T00:38:00Z"), "1b9a14a", deployedAt, undefined, now), null);
-  assert.equal(repositoryDeploymentMatch("1b9a14abcdef", now, "1B9A14A", deployedAt, { status: "valid" }, now), true);
-  assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", deployedAt, { status: "invalid" }, now), null);
-  assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", deployedAt, { status: "valid" }, now), false);
-  assert.equal(repositoryDeploymentMatch("38630ac", new Date("2026-10-10T11:20:00Z"), "1b9a14a", new Date("2026-10-09T11:20:00Z"), undefined, now), null);
+  assert.equal(repositoryDeploymentMatch("38630ac", new Date("2026-10-03T00:38:00Z"), "1b9a14a", deployedAt, undefined, now, now), null);
+  assert.equal(repositoryDeploymentMatch("1b9a14abcdef", now, "1B9A14A", deployedAt, { status: "valid" }, now, now), true);
+  assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", deployedAt, { status: "invalid" }, now, now), null);
+  assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", deployedAt, { status: "valid" }, now, now), false);
+  assert.equal(repositoryDeploymentMatch("38630ac", new Date("2026-10-10T11:20:00Z"), "1b9a14a", new Date("2026-10-09T11:20:00Z"), undefined, now, now), null);
+});
+
+test("repository comparison requires a recent provider confirmation, including for unchanged old releases", () => {
+  const oldRelease = new Date("2026-01-01T00:00:00Z");
+  assert.equal(repositoryDeploymentMatch("1b9a14abcdef", now, "1b9a14a", oldRelease, { status: "valid" }, now), null);
+  assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", oldRelease, { status: "valid" }, now,
+    new Date("2026-10-12T09:59:59Z")), null);
+  assert.equal(repositoryDeploymentMatch("1b9a14abcdef", now, "1b9a14a", oldRelease, { status: "valid" }, now, now), true);
+  assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", oldRelease, { status: "valid" }, now, now), false);
+  assert.equal(repositoryDeploymentMatch("38630ac", now, "1b9a14a", oldRelease, { status: "invalid" }, now, now), null);
 });

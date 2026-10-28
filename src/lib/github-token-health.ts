@@ -1,4 +1,5 @@
 import { GitHubApiError } from "@/lib/github";
+import { deploymentCommitsMatch, deploymentConfirmationState } from "@/lib/deployment-health";
 
 export type GitHubTokenHealth = {
   status: "valid" | "invalid" | "forbidden" | "unavailable" | "configuration_error" | "unknown";
@@ -42,9 +43,9 @@ export function githubTokenHealthCopy(health: GitHubTokenHealth) {
 }
 
 export function repositoryDeploymentMatch(repositoryCommit: string | null, scannedAt: Date | null, deployedCommit: string,
-  deployedAt: Date, health?: GitHubTokenHealth, now = new Date()): boolean | null {
+  deployedAt: Date, health?: GitHubTokenHealth, now = new Date(), verifiedAt?: Date | null): boolean | null {
   if (!repositoryCommit || !scannedAt || (health && health.status !== "valid")) return null;
+  if (deploymentConfirmationState(verifiedAt, now) !== "confirmed") return null;
   if (scannedAt < deployedAt || now.getTime() - scannedAt.getTime() > 25 * 60 * 60 * 1000) return null;
-  return repositoryCommit.toLowerCase().startsWith(deployedCommit.toLowerCase())
-    || deployedCommit.toLowerCase().startsWith(repositoryCommit.toLowerCase());
+  return deploymentCommitsMatch(repositoryCommit, deployedCommit);
 }

@@ -1,3 +1,6 @@
+import type { DependencyCategory, RepositoryScanState } from "@/lib/application-status";
+import type { DependencyScanCoverage } from "@/lib/dependency-scan";
+
 export type HealthStatus = "healthy" | "warning" | "critical" | "unknown";
 
 export type GitHubRepositoryOption = {
@@ -31,6 +34,7 @@ export interface MonitoredDependency {
   status: "current" | "outdated" | "unknown" | "unsupported";
   updateKind?: "major" | "compatible";
   development: boolean;
+  category: DependencyCategory;
   evidence: string;
 }
 
@@ -41,6 +45,11 @@ export interface DeploymentSummary {
   source: string;
   sourceUrl?: string;
   matchesRepositoryHead: boolean | null;
+  confirmationState: "confirmed" | "stale" | "unverified";
+  verifiedAt?: string;
+  verificationSource?: string;
+  branch?: string;
+  environment?: "production" | "staging" | "development";
 }
 
 export interface RenderingCheckSettings {
@@ -55,6 +64,7 @@ export interface MonitoredApplication {
   name: string;
   environment: "production" | "staging" | "development";
   status: HealthStatus;
+  availabilityStatus: HealthStatus;
   url: string;
   githubRepository: string;
   githubBranch: string;
@@ -70,6 +80,8 @@ export interface MonitoredApplication {
   lastCheckStatus: HealthStatus;
   lastCheckDetail?: string;
   lastRepositoryScannedAt?: string;
+  repositoryScan: RepositoryScanState;
+  dependencyScanCoverage?: DependencyScanCoverage;
   renderingCheck?: RenderingCheckSettings;
   productionDeployment?: DeploymentSummary;
   technologies: Technology[];

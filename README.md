@@ -17,6 +17,8 @@ Ouvrir ensuite [http://localhost:3011](http://localhost:3011).
 
 Démarrer aussi **`npm run build:worker`, puis `npm run worker` dans un second terminal** : les contrôles, analyses, rapports et notifications utilisent une file persistante. Reconstruire le worker après une modification de son code ; `npm run worker:dev` permet de travailler directement sur les sources. Sans ce processus, `/api/ready` et `/api/health` répondent 503. Pour une installation existante, suivre le [déploiement Coolify pas à pas](docs/deployment-coolify.md) ou le [guide de fiabilité](docs/reliability.md) pour une installation directe et le témoin externe.
 
+Cette version nécessite la migration **`0018_deployment_confirmation.sql`** avant le démarrage du nouveau web et du worker : appliquer les migrations avec `npm run db:migrate:prod` en production. Le déploiement actif utilise `compose.coolify.apps.yaml` ; le déploiement automatique depuis Git a été rétabli le 25 octobre 2026. Le diagnostic du 23 octobre concernant des images figées décrit une configuration antérieure.
+
 Au premier démarrage, Luigi redirige vers `/setup` pour créer l’unique compte administrateur de la V1. Les créations de compte suivantes sont refusées côté serveur. Copie `.env.example` vers `.env.local` si ce fichier n’existe pas et remplace impérativement `BETTER_AUTH_SECRET` hors développement local.
 
 ## Commandes
@@ -48,18 +50,24 @@ Cet endpoint facultatif réserve les tâches arrivées à échéance et renvoie 
 
 Les contrôles de même fréquence sont répartis sur leur intervalle, tous espaces confondus : six contrôles à 60 secondes occupent six créneaux espacés de dix secondes. Le planificateur vérifie les échéances toutes les dix secondes. Les contrôles manuels restent immédiats et ne décalent pas les prochaines échéances automatiques. Après mise à jour, les contrôles déjà échus peuvent encore partir ensemble une fois ; leurs prochaines échéances sont ensuite réparties. Le worker de production exécute du JavaScript précompilé et charge seulement les modules nécessaires à chaque tâche.
 
-Le bloc **Contrôle du rendu** de chaque application ajoute des vérifications au contrôle HTTP, car une page peut répondre HTTP 200 alors que ses images ne se chargent plus. Elles s’appliquent à la **page à contrôler**, par exemple une fiche produit `/produits/jade`, ou à défaut à la page d’accueil ; la disponibilité reste mesurée sur la page d’accueil :
+Le bloc **Contrôle HTTP du contenu** ajoute des vérifications à la **page à contrôler**, par exemple une fiche produit `/produits/jade`, ou à défaut à la page d’accueil. Il sonde le HTML et la réponse d’une image ; JavaScript, l’affichage dans un navigateur et les parcours métier restent hors de ce contrôle. Le badge HTTP de chaque application décrit sa réponse HTTP ; l’état des contrôles essentiels, les dépendances et le déploiement restent distincts.
 
 - **texte attendu** : chaîne littérale, sensible à la casse, recherchée dans le premier mégaoctet de la page (par exemple `srcset=`) ;
 - **image** : Luigi charge l’image indiquée ou, par défaut, l’image la plus révélatrice de la page : d’abord une URL `/_next/image`, puis une image redimensionnée à la volée (paramètres `w`, `format`, `preset`… d’un serveur d’assets Vendure ou d’un CDN d’images), en privilégiant l’image principale aux vignettes chargées au défilement. Il vérifie un statut 2xx, un type `image/*` et un corps non vide. Le détail indique l’image testée et, le cas échéant, l’en-tête `x-nextjs-cache`.
 
-Un échec compte comme un échec du contrôle : au même seuil, Luigi ouvre un incident « rendu dégradé », distinct d’une indisponibilité. « Enregistrer et tester » exécute immédiatement le contrôle. Si le cache de l’optimiseur est chaud, une panne qui ne touche que les nouvelles variantes d’image peut passer inaperçue : les signaux d’exécution du VPS couvrent ce cas.
+Un échec compte dans le seuil d’ouverture d’un incident « rendu dégradé ». **Enregistrer et tester** invalide la preuve précédente et met un contrôle en file ; le worker l’exécute ensuite. Une réponse commencée avant la modification des réglages est écartée et un nouveau contrôle est réservé. Si le cache de l’optimiseur est chaud, une panne touchant seulement de nouvelles variantes d’image peut passer inaperçue ; les signaux du VPS apportent des indices complémentaires.
 
-Le même appel planifie aussi l’analyse des dépendances. Par défaut, chaque dépôt est revérifié toutes les 24 heures, par lots de trois applications afin de ménager GitHub et le registre npm. `DEPENDENCY_SCAN_INTERVAL_HOURS` règle la cadence (de 1 à 168 heures) et `DEPENDENCY_SCAN_BATCH_SIZE` la taille du lot (de 1 à 20). Luigi recherche récursivement les `package.json`, jusqu’à 200 dépendances npm, et associe chaque solution au `package-lock.json` le plus proche. Deux solutions d’un même dépôt peuvent ainsi utiliser et suivre des versions différentes d’une bibliothèque. Une nouvelle version crée une notification et une tâche de maintenance contextualisées par le chemin du manifeste ; une analyse après mise à jour les résout automatiquement. Les paquets d’un même scope publiés dans la même version, comme `@vendure/*`, forment une seule mise à jour. Le cockpit classe les bibliothèques par importance (frameworks, dépendances d’exécution, versions majeures) et signale sur l’étiquette de la technologie la version disponible de son paquet principal.
+Le même appel planifie l’analyse des dépendances : toutes les 24 heures par défaut, avec jusqu’à trois nouvelles réservations par passage du planificateur. `DEPENDENCY_SCAN_INTERVAL_HOURS` règle la cadence (1 à 168 heures) et `DEPENDENCY_SCAN_BATCH_SIZE` la taille du lot (1 à 20). Un budget de **200 dépendances déclarées par dépôt, partagé entre npm et Python**, est interrogé sur les registres publics npm et PyPI. Les autres dépendances restent « à vérifier ».
+
+Luigi recherche récursivement `package.json` et lui associe le `package-lock.json` le plus proche. Python couvre `requirements.txt` et ses variantes `requirements-*.txt`, `requirements_*.txt` et `requirements.*.txt`, avec un sous-ensemble de PEP 440 limité aux versions finales numériques. Marqueurs, URLs, index pip personnalisés et formes de version non prises en charge restent explicitement non suivis. Les dépendances de `pyproject.toml`, Composer, Go et Cargo ne sont pas suivies ; leurs technologies peuvent être détectées. Les lockfiles alternatifs, fichiers de plus de 1 Mo et plafonds de collecte sont signalés dans la couverture. Une contrainte acceptant la dernière version ne prouve pas la version installée ; les résultats décrivent le dépôt, pas la production.
+
+Le cockpit indique l’état et la date du dernier scan, ses limites, puis sépare exécution, développement et outils/migrations selon le paquet et le chemin du manifeste. Des paquets npm d’une même famille peuvent former une seule mise à jour dans leur catégorie. Les constats et tâches restent contextualisés par manifeste ; une analyse complète après correction peut les résoudre. Cette analyse suit les versions disponibles et ne constitue pas une analyse de vulnérabilités.
 
 ## Version actuellement déployée
 
-Configure `DEPLOYMENT_INGEST_SECRET`, puis ajoute un appel à Luigi à la fin d’un déploiement réussi. L’application peut être identifiée par son URL publique ou son UUID. `deploymentId` doit identifier une exécution de manière stable afin qu’une relance du même signal ne crée pas de doublon.
+Le worker peut confirmer périodiquement la version active auprès de Coolify, Netlify et Railway. Voir [la configuration de la synchronisation des déploiements](docs/deployment-sync.md). Une confirmation du fournisseur reste valable deux heures ; la date de livraison peut être ancienne si la même version est toujours active.
+
+Pour enregistrer aussi les événements CI, configure `DEPLOYMENT_INGEST_SECRET` puis appelle Luigi après une livraison réussie. Ce signal seul conserve un événement historique sans confirmer la version encore active. L’application est identifiée par son URL publique ou son UUID. `deploymentId` identifie une exécution de manière stable ; une répétition incompatible avec son SHA ou sa cible reçoit HTTP 409.
 
 ```http
 POST /api/deployments
@@ -71,12 +79,14 @@ Content-Type: application/json
   "deploymentId": "github-run-12345-1",
   "commitSha": "0123456789abcdef0123456789abcdef01234567",
   "source": "github-actions",
+  "branch": "main",
+  "environment": "production",
   "sourceUrl": "https://github.com/acme/shop/actions/runs/12345",
   "deployedAt": "2026-09-09T12:34:56Z"
 }
 ```
 
-Le cockpit affiche le commit court, son message pour la tête du dépôt, la date, la source et un accès au déploiement. Les dépôts déjà enregistrés récupèrent le message lors de leur prochaine analyse. Il compare la branche analysée sur GitHub au commit déclaré en production lorsque les observations sont assez récentes.
+Le cockpit affiche le commit, sa source, la date de livraison et la date de confirmation séparément. Il privilégie l’événement dernièrement confirmé, y compris lors d’un rollback. La comparaison dépôt/production exige une confirmation récente du fournisseur et une observation GitHub valide ; une simple réponse HTTP 200 ne suffit pas.
 
 ### Validité du jeton GitHub
 
@@ -84,7 +94,7 @@ Le worker vérifie le jeton enregistré toutes les heures, même sans dépôt su
 
 Un refus HTTP 401 signale un jeton invalide, potentiellement expiré ou révoqué ; un refus de permissions, une limitation de requêtes, une panne réseau et une erreur de chiffrement restent distingués. Une notification interne dédupliquée indique où intervenir ; l’enregistrement d’un nouveau jeton valide la résout et relance immédiatement les analyses des applications actives, sans attendre le délai habituel de 24 heures après un scan en échec. Un contrôle qui confirme le retour de l’accès après une erreur relance également ces analyses. Les tâches déjà en attente reprennent immédiatement avec un nouveau budget de tentatives ; les analyses en cours conservent leur bail et aucun doublon actif n’est créé. Aucune date d’expiration n’est déduite d’un simple refus. Les anciennes intégrations sont indiquées « à vérifier » jusqu’à leur premier contrôle.
 
-La comparaison des commits reste inconnue lorsque le jeton n’est pas confirmé, que l’observation du dépôt est antérieure au déploiement ou qu’elle date de plus de 25 heures. Une différence de SHA est affichée comme une différence entre dépôt et déploiement, sans présumer lequel est en avance. Cette évolution utilise la configuration JSON existante : reconstruire et redéployer **le web et le worker**, sans migration supplémentaire.
+La comparaison des commits reste inconnue lorsque le jeton n’est pas confirmé, que l’observation du dépôt est antérieure au déploiement, qu’elle date de plus de 25 heures ou que la confirmation du fournisseur manque ou est périmée. Une différence de SHA ne présume pas lequel est en avance. Appliquer la migration 0018, puis reconstruire et redéployer **le web et le worker**.
 
 ## Notifications Web Push
 
@@ -112,6 +122,7 @@ Luigi y publie les mêmes événements que le Web Push : incidents critiques, al
 
 - [Spécification du module de monitoring](docs/monitoring.md)
 - [Worker, reprises, couverture et témoin externe](docs/reliability.md)
+- [Confirmation et synchronisation des déploiements](docs/deployment-sync.md)
 - [Contexte de design](.impeccable.md)
 - [Installation de l’agent VPS](agent/README.md)
 
@@ -119,7 +130,7 @@ Luigi y publie les mêmes événements que le Web Push : incidents critiques, al
 
 Le cockpit responsive, le socle PWA, PostgreSQL, l’initialisation mono-administrateur et la création persistante d’applications sont opérationnels. Les contrôles HTTP, observations, métriques de disponibilité sur 30 jours, incidents après trois échecs, récupérations et notifications internes sont branchés sur les données réelles.
 
-L’intégration GitHub peut vérifier un jeton finement paramétré, le chiffrer avec `INTEGRATION_ENCRYPTION_KEY` et analyser les dépôts privés autorisés. Les dépôts publics sont analysables sans jeton. Le scanner inspecte récursivement les manifests, conserve le commit servant de preuve, détecte les technologies — dont Vendure via `@vendure/core` — et vérifie jusqu’à 200 dépendances npm. Une version verrouillée plus ancienne, ou à défaut une contrainte n’acceptant plus la dernière version publiée, génère automatiquement un constat et une tâche de maintenance propres à la solution concernée.
+L’intégration GitHub vérifie et chiffre le jeton avec `INTEGRATION_ENCRYPTION_KEY` pour accéder aux dépôts privés autorisés ; les dépôts publics sont analysables sans jeton. Le scanner conserve le commit servant de preuve, détecte les technologies et suit jusqu’à 200 dépendances déclarées npm/Python selon les limites décrites ci-dessus. Une version ancienne détectée génère un constat et une tâche propres au manifeste concerné.
 
 Pour un jeton GitHub V1, accorde uniquement l’accès aux dépôts nécessaires avec la permission **Contents: Read-only**. Une GitHub App dédiée remplacera avantageusement ce mécanisme lors de la mise en production.
 

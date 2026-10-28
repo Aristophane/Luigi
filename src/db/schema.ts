@@ -14,6 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { user } from "@/db/auth-schema";
+import type { DependencyScanCoverage } from "@/lib/dependency-scan";
 
 export * from "@/db/auth-schema";
 
@@ -79,6 +80,7 @@ export const applications = pgTable(
     status: healthStatus("status").default("unknown").notNull(),
     lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
     lastRepositoryScannedAt: timestamp("last_repository_scanned_at", { withTimezone: true }),
+    dependencyScanCoverage: jsonb("dependency_scan_coverage").$type<DependencyScanCoverage>(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...timestamps,
   },
@@ -132,6 +134,10 @@ export const deployments = pgTable(
     source: text("source").default("ci").notNull(),
     sourceUrl: text("source_url"),
     deployedAt: timestamp("deployed_at", { withTimezone: true }).notNull(),
+    branch: text("branch"),
+    environment: environment("environment"),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    verificationSource: text("verification_source"),
     ...timestamps,
   },
   (table) => [

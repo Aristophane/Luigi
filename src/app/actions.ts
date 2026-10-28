@@ -15,13 +15,14 @@ import {
   technologies,
 } from "@/db/schema";
 import { requireWorkspace } from "@/lib/dal";
-import { inspectNpmDependencies } from "@/lib/dependency-freshness";
+import { inspectDependencies } from "@/lib/dependency-freshness";
 import { syncDependencyFindings } from "@/lib/application-scanner";
 import { GitHubApiError } from "@/lib/github";
 import { withGitHubToken } from "@/lib/github-integration";
 import { enqueueChecks } from "@/lib/monitor-scheduler";
 import { enqueueJob } from "@/lib/job-queue";
 import { scanGitHubTechnologies } from "@/lib/technology-scanner";
+import { aggregateHealth } from "@/lib/monitoring-state";
 
 export type CreateApplicationState = {
   status: "idle" | "success" | "error";
@@ -144,7 +145,7 @@ export async function createApplication(
     }
     return { status: "error", message: "L’analyse GitHub n’a pas pu aboutir. Réessaie dans quelques instants." };
   }
-  const dependencyFreshness = await inspectNpmDependencies(scan.dependencies);
+  const dependencyFreshness = await inspectDependencies(scan.dependencies);
 
   try {
     await db.transaction(async (transaction) => {
@@ -160,6 +161,7 @@ export async function createApplication(
           repositoryCommit: scan.commitSha,
         repositoryCommitMessage: scan.commitMessage,
           lastRepositoryScannedAt: new Date(),
+          dependencyScanCoverage: scan.coverage,
         })
         .returning({ id: applications.id });
 
@@ -217,7 +219,7 @@ export async function createApplication(
     status: "success",
     message: scan.technologies.length > 0
       ? `${scan.technologies.length} technologie${scan.technologies.length > 1 ? "s" : ""} et ${dependencyFreshness.length} dépendance${dependencyFreshness.length > 1 ? "s" : ""} analysées dans ${repository}.`
-      : `Application enregistrée. Aucun manifeste reconnu à la racine de ${repository}.`,
+      : `Application enregistrée. Aucune technologie reconnue parmi les fichiers inspectés dans ${repository}.`,
   };
 }
 
@@ -509,18 +511,24 @@ export async function updateRenderingCheck(
     .limit(1);
   if (!check) return { status: "error", message: "Cette application n’est plus surveillée." };
 
-  await db
-    .update(checks)
-    .set({
+  await db.transaction(async (transaction) => {
+    // Match the monitor's lock order so a concurrent result cannot restore the old proof.
+    await transaction.select({ id: applications.id }).from(applications)
+      .where(eq(applications.id, parsedId.data)).for("update");
+    await transaction.update(checks).set({
       renderingUrl: parsed.data.renderingUrl || null,
       expectedText: parsed.data.expectedText || null,
       assetProbe: parsed.data.assetProbe,
       assetUrl: parsed.data.assetUrl || null,
+      status: "unknown",
+      lastCheckedAt: null,
       updatedAt: new Date(),
-    })
-    .where(eq(checks.id, check.id));
+    }).where(eq(checks.id, check.id));
+    const siblings = await transaction.select().from(checks).where(eq(checks.applicationId, parsedId.data));
+    await transaction.update(applications).set({ status: aggregateHealth(siblings) }).where(eq(applications.id, parsedId.data));
 
-  await enqueueJob({ workspaceId, kind: "check", key: 'check:' + check.id, payload: { checkId: check.id } });
+    await enqueueJob({ workspaceId, kind: "check", key: 'check:' + check.id, payload: { checkId: check.id } }, transaction);
+  });
   revalidatePath("/");
   return { status: "success", message: "Réglages enregistrés. Contrôle mis en file d’exécution." };
 }
